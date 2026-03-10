@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}휴지통{% endblock %}
+
+{% block breadcrumb %}<div class="breadcrumb"><a href="/customers/settings/" style="text-decoration:none;color:inherit;">설정</a> / 휴지통</div>{% endblock %}
+{% block header_title %}
+<div class="page-title">휴지통</div>
+<div class="muted">삭제된 고객은 30일 후 자동 삭제됩니다. (기간 내 복구 가능)</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .table { width:100%; border-collapse:collapse; }
+  .table th, .table td { padding:12px 10px; border-bottom:1px solid rgba(0,0,0,.08); vertical-align:middle; white-space:nowrap; }
+  .table th { text-align:left; color:rgba(0,0,0,.55); font-weight:900; }
+  .actions { display:flex; justify-content:flex-end; gap:8px; }
+  .danger { background:#ef4444; border-color:#ef4444; color:#fff; }
+</style>
+
+<div class="card">
+  <div class="card-head" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="card-title">삭제된 고객</div>
+      <span class="badge">{{ total }}</span>
+    </div>
+
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <form method="get" style="margin:0; display:flex; gap:8px; align-items:center;">
+        <select class="input" name="per_page" style="width:110px;">
+          <option value="30" {% if per_page == "30" %}selected{% endif %}>30</option>
+          <option value="50" {% if per_page == "50" %}selected{% endif %}>50</option>
+          <option value="100" {% if per_page == "100" %}selected{% endif %}>100</option>
+          <option value="200" {% if per_page == "200" %}selected{% endif %}>200</option>
+        </select>
+        <button class="btn ghost" type="submit">적용</button>
+      </form>
+
+      <button class="btn" type="button" id="selectAllBtn">전체 선택</button>
+
+      <form method="post" action="/customers/settings/trash/bulk-restore/" id="bulkRestoreForm" style="margin:0;">
+        {% csrf_token %}
+        <button class="btn" type="submit" onclick="return confirm('선택한 고객을 복구할까요?');">선택 복구</button>
+      </form>
+
+      <form method="post" action="/customers/settings/trash/bulk-purge/" id="bulkPurgeForm" style="margin:0;">
+        {% csrf_token %}
+        <button class="btn danger" type="submit" onclick="return confirm('선택한 고객을 완전 삭제할까요? (복구 불가)');">선택 완전 삭제</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-body" style="overflow:auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="min-width:44px;"><input type="checkbox" id="selectAllCb" aria-label="전체 선택"></th>
+          <th style="min-width:140px;">고객명</th>
+          <th style="min-width:140px;">연락처</th>
+          <th style="min-width:220px;">삭제일시</th>
+          <th style="min-width:120px; text-align:right;">개별 처리</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in customers %}
+          <tr>
+            <td><input type="checkbox" class="trash-cb" value="{{ c.id }}"></td>
+            <td><b>{{ c.name }}</b></td>
+            <td>{{ c.phone }}</td>
+            <td>{{ c.deleted_at|date:"Y-m-d H:i" }}</td>
+            <td class="actions">
+              <form method="post" action="/customers/settings/trash/{{ c.id }}/restore/" style="margin:0;">
+                {% csrf_token %}
+                <button class="btn" type="submit">복구</button>
+              </form>
+              <form method="post" action="/customers/settings/trash/{{ c.id }}/purge/" style="margin:0;">
+                {% csrf_token %}
+                <button class="btn danger" type="submit" onclick="return confirm('완전 삭제하면 복구할 수 없습니다. 삭제할까요?');">완전 삭제</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="muted">휴지통이 비어 있습니다.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 4px;">
+    <div class="muted">페이지 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      {% if page_obj.has_previous %}
+        <a class="btn" href="?per_page={{ per_page }}&page=1">처음</a>
+        <a class="btn" href="?per_page={{ per_page }}&page={{ page_obj.previous_page_number }}">이전</a>
+      {% endif %}
+
+      {% for p in page_obj.paginator.page_range %}
+        {% if p >= page_obj.number|add:-2 and p <= page_obj.number|add:2 %}
+          {% if p == page_obj.number %}
+            <span class="btn" style="background:rgba(37,99,235,.12); border-color:rgba(37,99,235,.25); color:#2563eb; cursor:default;">{{ p }}</span>
+          {% else %}
+            <a class="btn" href="?per_page={{ per_page }}&page={{ p }}">{{ p }}</a>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+        <a class="btn" href="?per_page={{ per_page }}&page={{ page_obj.next_page_number }}">다음</a>
+        <a class="btn" href="?per_page={{ per_page }}&page={{ page_obj.paginator.num_pages }}">끝</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  const selectAllCb = document.getElementById('selectAllCb');
+  const cbs = () => Array.from(document.querySelectorAll('.trash-cb'));
+
+  function selectedIds(){ return cbs().filter(cb => cb.checked).map(cb => cb.value); }
+
+  function sync(){
+    ['bulkRestoreForm','bulkPurgeForm'].forEach(fid=>{
+      const form = document.getElementById(fid);
+      if(!form) return;
+      form.querySelectorAll('input[name="ids"]').forEach(n=>n.remove());
+      selectedIds().forEach(id=>{
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'ids';
+        inp.value = id;
+        form.appendChild(inp);
+      });
+    });
+
+    // UI toggle state (전체 선택 / 전체 해제)
+    const all = cbs();
+    const checkedCount = all.filter(cb=>cb.checked).length;
+    const totalCount = all.length;
+
+    if(selectAllBtn){
+      selectAllBtn.textContent = (totalCount > 0 && checkedCount === totalCount) ? '전체 해제' : '전체 선택';
+    }
+
+    if(selectAllCb){
+      if(totalCount === 0){
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+      }else if(checkedCount === 0){
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+      }else if(checkedCount === totalCount){
+        selectAllCb.checked = true;
+        selectAllCb.indeterminate = false;
+      }else{
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = true;
+      }
+    }
+  }
+
+  function toggleAll(toChecked){
+    cbs().forEach(cb=>cb.checked = toChecked);
+    sync();
+  }
+
+  selectAllBtn?.addEventListener('click', ()=>{
+    const all = cbs();
+    const allChecked = all.length > 0 && all.every(cb=>cb.checked);
+    toggleAll(!allChecked);
+  });
+
+  selectAllCb?.addEventListener('change', ()=>{
+    toggleAll(!!selectAllCb.checked);
+  });
+
+  document.addEventListener('change', (e)=>{ if(e.target && e.target.classList.contains('trash-cb')) sync(); });
+  sync();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}고객관리{% endblock %}
+
+{% block header_title %}
+<div class="page-title">고객관리</div>
+{% endblock %}
+
+{% block header_actions %}
+<a class="btn" href="/customers/new/" style="background:#2563eb; border-color:#2563eb; color:#fff;">+ 고객 등록</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  /* Layout only: keep existing behavior intact */
+  .cust-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:space-between; }
+  .cust-toolbar-left { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .cust-toolbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .cust-toolbar .input { height:42px; }
+  .cust-search { position:relative; }
+  .cust-search .input { padding-left:38px; width:260px; }
+  .cust-search .icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); opacity:.55; font-size:16px; }
+  .cust-filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .cust-filters .input { width:92px; }
+
+  .table { width:100%; border-collapse:collapse; }
+  .table th, .table td { padding:12px 12px; border-bottom:1px solid rgba(0,0,0,.08); vertical-align:middle; white-space:nowrap; }
+  .table th { text-align:left; color:rgba(0,0,0,.55); font-weight:900; font-size:13px; }
+  .table td { font-size:14px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .badge-pill { display:inline-flex; align-items:center; justify-content:center; padding:3px 10px; border-radius:999px; border:1px solid rgba(0,0,0,.08); font-weight:800; font-size:12px; }
+  .badge-blue { background:rgba(37,99,235,.12); border-color:rgba(37,99,235,.25); color:#2563eb; }
+  .badge-orange { background:rgba(249,115,22,.12); border-color:rgba(249,115,22,.22); color:#f97316; }
+
+  .row-open { display:flex; justify-content:flex-end; }
+  .chev { display:inline-flex; width:32px; height:32px; border-radius:10px; align-items:center; justify-content:center; border:1px solid rgba(0,0,0,.06); }
+  .chev:hover { background:rgba(0,0,0,.03); }
+
+  .btn.small { padding:8px 10px; border-radius:10px; }
+  .danger { background:#ef4444; border-color:#ef4444; color:#fff; }
+  .hidden { display:none !important; }
+</style>
+
+<div class="card">
+  <div class="card-head" style="display:flex; gap:12px; align-items:center; justify-content:space-between;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="card-title">고객 목록</div>
+      <span class="badge">{{ sb_customers_total }}</span>
+    </div>
+  </div>
+
+  <div style="padding:12px 16px 6px 16px;">
+    <div class="cust-toolbar">
+      <form method="get" style="display:contents;">
+        <!-- Left: Search + Filters -->
+        <div class="cust-toolbar-left">
+          <div class="cust-search">
+            <span class="icon">🔎</span>
+            <input class="input" name="q" value="{{ q }}" placeholder="검색" aria-label="검색">
+          </div>
+
+          <div class="cust-filters">
+            <select class="input" name="filter_stage" aria-label="단계">
+              <option value="">단계</option>
+              <option value="검사" {% if filter_stage == "검사" %}selected{% endif %}>검사</option>
+              <option value="제품/결제" {% if filter_stage == "제품/결제" %}selected{% endif %}>제품/결제</option>
+              <option value="공단" {% if filter_stage == "공단" %}selected{% endif %}>공단</option>
+              <option value="후기적합" {% if filter_stage == "후기적합" %}selected{% endif %}>후기적합</option>
+            </select>
+            <select class="input" name="filter_status" aria-label="상태">
+              <option value="">상태</option>
+              <option value="진행" {% if filter_status == "진행" %}selected{% endif %}>진행</option>
+              <option value="보류" {% if filter_status == "보류" %}selected{% endif %}>보류</option>
+              <option value="취소" {% if filter_status == "취소" %}selected{% endif %}>취소</option>
+            </select>
+            <select class="input" name="filter_cycle" aria-label="회차">
+              <option value="">회차</option>
+              {% for c in cycle_range %}
+                <option value="{{ c }}" {% if filter_cycle == c|stringformat:"i" %}selected{% endif %}>{{ c }}회차</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <!-- Right: PerPage + Actions -->
+        <div class="cust-toolbar-right">
+          <select class="input" name="per_page" aria-label="목록수" style="width:92px;">
+            <option value="30" {% if per_page == "30" %}selected{% endif %}>30</option>
+            <option value="50" {% if per_page == "50" %}selected{% endif %}>50</option>
+            <option value="100" {% if per_page == "100" %}selected{% endif %}>100</option>
+            <option value="200" {% if per_page == "200" %}selected{% endif %}>200</option>
+          </select>
+
+          <button class="btn" type="submit" style="background:#2563eb; border-color:#2563eb; color:#fff; height:42px; padding:0 14px;">조회</button>
+
+          <!-- delete mode actions kept (layout only) -->
+          <button class="btn ghost" type="button" id="toggleDeleteMode" style="height:42px;">삭제</button>
+        </div>
+      </form>
+
+      <form method="post" action="/customers/bulk-trash/" id="bulkTrashForm" class="hidden" style="margin:0; display:flex; gap:8px; align-items:center;">
+        {% csrf_token %}
+        <button class="btn ghost" type="button" id="selectAllBtn" style="height:42px;">전체 선택</button>
+        <button class="btn danger" type="submit" style="height:42px;" onclick="return confirm('선택한 고객을 휴지통으로 이동할까요?');">선택 삭제</button>
+        <button class="btn ghost" type="button" id="cancelDeleteMode" style="height:42px;">취소</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-body" style="overflow:auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th class="select-col hidden" style="min-width:44px;"><input type="checkbox" id="selectAllCheckbox" aria-label="전체 선택"></th>
+          <th style="min-width:90px;">고객ID</th>
+          <th style="min-width:140px;">고객명</th>
+          <th style="min-width:160px;">단계</th>
+          <th style="min-width:90px;">회차</th>
+          <th style="min-width:110px;">상태</th>
+          <th style="min-width:72px; text-align:right;"> </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in customers %}
+          <tr>
+            <td class="select-col hidden">
+              <input type="checkbox" name="ids" value="{{ c.id }}" form="bulkTrashForm">
+            </td>
+            <td class="mono">{{ c.id }}</td>
+            <td><b>{{ c.name }}</b></td>
+            <td>{{ c.stage|default:"-" }}</td>
+            <td>{{ c.current_cycle|default:"-" }}</td>
+            <td>
+              {% if c.status == '진행' %}
+                <span class="badge-pill badge-blue">진행</span>
+              {% elif c.status == '시급' %}
+                <span class="badge-pill badge-orange">시급</span>
+              {% else %}
+                <span class="badge-pill badge-blue">{{ c.status|default:"-" }}</span>
+              {% endif %}
+            </td>
+            <td class="row-open">
+              <a class="chev" href="/customers/{{ c.id }}/" aria-label="열기">열기</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="muted">등록된 고객이 없습니다.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 4px;">
+    <div class="muted">페이지 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      {% if page_obj.has_previous %}
+        <a class="btn small" href="?q={{ q }}&per_page={{ per_page }}&page=1">처음</a>
+        <a class="btn small" href="?q={{ q }}&per_page={{ per_page }}&page={{ page_obj.previous_page_number }}">이전</a>
+      {% endif %}
+
+      {% for p in page_obj.paginator.page_range %}
+        {% if p >= page_obj.number|add:-2 and p <= page_obj.number|add:2 %}
+          {% if p == page_obj.number %}
+            <span class="btn small" style="background:rgba(37,99,235,.12); border-color:rgba(37,99,235,.25); color:#2563eb; cursor:default;">{{ p }}</span>
+          {% else %}
+            <a class="btn small" href="?q={{ q }}&per_page={{ per_page }}&page={{ p }}">{{ p }}</a>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+        <a class="btn small" href="?q={{ q }}&per_page={{ per_page }}&page={{ page_obj.next_page_number }}">다음</a>
+        <a class="btn small" href="?q={{ q }}&per_page={{ per_page }}&page={{ page_obj.paginator.num_pages }}">끝</a>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+  (function(){
+    const toggleBtn = document.getElementById('toggleDeleteMode');
+    const cancelBtn = document.getElementById('cancelDeleteMode');
+    const bulkForm = document.getElementById('bulkTrashForm');
+    const selectCols = document.querySelectorAll('.select-col');
+
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+
+    function setAllChecked(checked){
+      document.querySelectorAll('input[type="checkbox"][name="ids"]').forEach(cb => cb.checked = checked);
+      if(selectAllCheckbox) selectAllCheckbox.checked = checked;
+      if(selectAllBtn) selectAllBtn.textContent = checked ? '전체 해제' : '전체 선택';
+    }
+
+
+    function setDeleteMode(on){
+      if(on){
+        bulkForm.classList.remove('hidden');
+        if(selectAllBtn) selectAllBtn.textContent='전체 선택';
+        if(selectAllCheckbox) selectAllCheckbox.checked=false;
+        selectCols.forEach(el => el.classList.remove('hidden'));
+        toggleBtn.classList.add('hidden');
+      }else{
+        bulkForm.classList.add('hidden');
+        selectCols.forEach(el => el.classList.add('hidden'));
+        toggleBtn.classList.remove('hidden');
+        document.querySelectorAll('input[type="checkbox"][name="ids"]').forEach(cb => cb.checked=false);
+        if(selectAllCheckbox) selectAllCheckbox.checked=false;
+        if(selectAllBtn) selectAllBtn.textContent='전체 선택';
+      }
+    }
+
+    toggleBtn.addEventListener('click', () => setDeleteMode(true));
+    cancelBtn.addEventListener('click', () => setDeleteMode(false));
+
+    if(selectAllBtn){
+      selectAllBtn.addEventListener('click', () => {
+        const anyUnchecked = Array.from(document.querySelectorAll('input[type="checkbox"][name="ids"]')).some(cb => !cb.checked);
+        setAllChecked(anyUnchecked);
+      });
+    }
+    if(selectAllCheckbox){
+      selectAllCheckbox.addEventListener('change', (e) => setAllChecked(e.target.checked));
+    }
+    document.querySelectorAll('input[type="checkbox"][name="ids"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const boxes = Array.from(document.querySelectorAll('input[type="checkbox"][name="ids"]'));
+        const allChecked = boxes.length>0 && boxes.every(b => b.checked);
+        const anyChecked = boxes.some(b => b.checked);
+        if(selectAllCheckbox) selectAllCheckbox.checked = allChecked;
+        if(selectAllBtn) selectAllBtn.textContent = allChecked ? '전체 해제' : '전체 선택';
+      });
+    });
+
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,560 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}매출분석{% endblock %}
+
+{% block breadcrumb %}<div class="breadcrumb">설정 / 매출분석</div>{% endblock %}
+{% block header_title %}<div class="page-title">매출분석</div>{% endblock %}
+
+{% block content %}
+<div class="card sales-report">
+  <div class="card-head" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <div>
+      <div class="card-title">기간별 조회</div>
+      <div class="muted">결제일 기준(발생) / 입금일 기준(실입금) 기준으로 집계합니다.</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <a class="btn soft2" href="/customers/settings/" style="text-decoration:none;">설정</a>
+      {% if view_mode != "detail" %}
+      <button class="btn" type="button" id="salesDownloadBtn">매출 다운로드</button>
+      {% else %}
+      <a class="btn" style="text-decoration:none;" href="/customers/settings/sales-analysis/vat-export/?mode=detail&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&gran=day">상세 다운로드</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if view_mode != "detail" %}
+  <!-- 다운로드 확인 모달 (msh 커스텀 모달 스타일 통일) -->
+  <style>
+    .msh-modal-overlay{
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      display: none;
+      z-index: 9999;
+    }
+    .msh-modal{
+      position: fixed;
+      left: 50%;
+      top: 42vh;
+      transform: translate(-50%, -50%);
+      width: min(560px, calc(100vw - 32px));
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.25);
+      padding: 18px 18px 14px;
+      display: none;
+      z-index: 10000;
+    }
+    .msh-modal h3{
+      margin: 0 0 10px;
+      font-size: 16px;
+      font-weight: 900;
+    }
+    .msh-modal .msh-modal-body{
+      font-size: 14px;
+      line-height: 1.5;
+      color: #111;
+      white-space: pre-line;
+    }
+    .msh-modal .msh-modal-actions{
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 14px;
+    }
+    .msh-btn{
+      border: 1px solid #e5e7eb;
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .msh-btn-primary{
+      border-color: #2563eb;
+      background: #2563eb;
+      color: #fff;
+      text-decoration:none;
+      display:inline-flex;
+      align-items:center;
+    }
+  </style>
+
+  <div class="msh-modal-overlay" id="mshSalesDlOverlay" aria-hidden="true"></div>
+
+  <div class="msh-modal" id="mshSalesDlModal"
+       role="dialog" aria-modal="true" aria-labelledby="mshSalesDlTitle" style="display:none;">
+    <h3 id="mshSalesDlTitle">매출자료 다운로드</h3>
+
+    <div class="msh-modal-body" id="mshSalesDlBody">위 자료를 다운로드 하시겠습니까?
+
+위 자료는 매출 확인 및 부가세 매출자료로도 활용이 가능합니다.</div>
+
+    <div class="msh-modal-actions">
+      <button type="button" class="msh-btn" id="mshSalesDlCancel">취소</button>
+      <a class="msh-btn msh-btn-primary" id="mshSalesDlOk"
+         href="/customers/settings/sales-analysis/vat-export/?start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&gran={{ gran }}">다운로드</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card-body" style="display:grid; gap:12px;">
+    <form method="get" class="sales-filter" id="salesFilterForm">
+      <input type="hidden" name="view" value="{{ view_mode }}" />
+      <input type="hidden" name="searched" value="1" />
+      <div id="dateRangeWrap">
+        <div class="muted field-label" style="margin-bottom:6px;">시작일</div>
+        <input class="input" type="date" id="startInput" name="start" value="{{ start|date:'Y-m-d' }}" />
+      </div>
+      <div id="dateRangeWrap2">
+        <div class="muted field-label" style="margin-bottom:6px;">종료일</div>
+        <input class="input" type="date" id="endInput" name="end" value="{{ end|date:'Y-m-d' }}" />
+      </div>
+
+      <div id="monthWrap" style="display:none;">
+        <div class="muted field-label" style="margin-bottom:6px;">시작월</div>
+        <input class="input" type="month" id="startMonthInput" name="start_month" value="{{ start_month|default:'' }}" />
+      </div>
+      <div id="monthWrap2" style="display:none;">
+        <div class="muted field-label" style="margin-bottom:6px;">종료월</div>
+        <input class="input" type="month" id="endMonthInput" name="end_month" value="{{ end_month|default:'' }}" />
+      </div>
+
+      <div>
+        <div class="muted field-label" style="margin-bottom:6px;">집계 단위</div>
+        {% if view_mode == "detail" %}
+          <input type="hidden" name="gran" value="day" />
+          <select class="input" id="granSelect" name="gran_disabled" disabled>
+            <option value="day" selected>일(day)</option>
+          </select>
+{% else %}
+          <select class="input" id="granSelect" name="gran">
+            <option value="day" {% if gran == 'day' %}selected{% endif %}>일(day)</option>
+            <option value="week" {% if gran == 'week' %}selected{% endif %}>주(week, 일~토)</option>
+            <option value="month" {% if gran == 'month' %}selected{% endif %}>월(month)</option>
+          </select>
+{% endif %}
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <button class="btn primary" type="submit">조회</button>
+      </div>
+    </form>
+
+    <div class="thin-divider"></div>
+
+    <div class="sales-tabs" style="margin-bottom:8px;">
+      <a class="sales-tab {% if view_mode != 'detail' %}is-active{% endif %}" style="text-decoration:none;" href="?view=data&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&gran={{ gran }}{% if gran == 'month' %}&start_month={{ start_month }}&end_month={{ end_month }}{% endif %}{% if searched %}&searched=1{% endif %}">매출자료</a>
+      <a class="sales-tab {% if view_mode == 'detail' %}is-active{% endif %}" style="text-decoration:none;" href="?view=detail&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}&gran={{ gran }}{% if gran == 'month' %}&start_month={{ start_month }}&end_month={{ end_month }}{% endif %}{% if searched %}&searched=1{% endif %}">매출상세</a>
+    </div>
+
+    {% if not searched %}
+      <div class="muted" style="margin-top:-2px;">데이터가 많아 조회 전에는 표시하지 않습니다. 기간 선택 후 <b>조회</b>를 눌러주세요.</div>
+    {% endif %}
+
+    {% if view_mode != "detail" %}
+    <div class="sales-tabs">
+      <button type="button" class="sales-tab js-tab is-active" data-tab="pay">결제일 기준</button>
+      <button type="button" class="sales-tab js-tab" data-tab="dep">입금일 기준</button>
+    </div>
+
+    <!-- 결제일 기준 -->
+    <div id="tab-pay" class="tab-panel">
+      <div class="card" style="border-radius:12px;">
+        <div class="card-head">
+          <div class="card-title">결제일 기준 매출</div>
+          <div class="muted">케이스 1회(첫 결제일/구매일 기준)로 집계합니다.</div>
+        </div>
+        <div class="card-body" style="overflow:auto;">
+          <table class="table report-table" style="width:100%; min-width:980px;">
+            <thead>
+              <tr>
+                <th style="text-align:left;">기간</th>
+                <th style="text-align:right;">보청기 수량</th>
+                <th style="text-align:right;">총 매출</th>
+                <th style="text-align:right;">실 매출</th>
+                <th style="text-align:right;">과세구분</th>
+                <th style="text-align:right;">공단 금액</th>
+                <th style="text-align:right;">본인부담액</th>
+                <th style="text-align:right;">자부담금액</th>
+                <th style="text-align:right;">후기적합</th>
+                <th style="text-align:right;">as비용</th>
+                <th style="text-align:right;">환불</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if searched %}
+              {% for r in pay_rows %}
+              <tr>
+                <td>{{ r.period }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.qty }}개</td>
+                <td style="text-align:right;" class="mono">{{ r.total|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.real|money }}</td>
+	                <td style="text-align:right;"><span class="pill">{{ r.tax_label }}</span></td>
+                <td style="text-align:right;" class="mono">{{ r.nhis|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.copay|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.self_add|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.followup|default:0|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.as_cost|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.refund|money }}</td>
+              </tr>
+              {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 입금일 기준 -->
+    <div id="tab-dep" class="tab-panel" style="display:none;">
+      <div class="card" style="border-radius:12px;">
+        <div class="card-head">
+          <div class="card-title">입금일 기준 매출</div>
+          <div class="muted">수납(결제) + 공단 입금 기준으로 집계합니다.</div>
+        </div>
+        <div class="card-body" style="overflow:auto;">
+          <table class="table report-table" style="width:100%; min-width:1180px;">
+            <thead>
+              <tr>
+                <th style="text-align:left;">기간</th>
+                <th style="text-align:right;">보청기 수량</th>
+                <th style="text-align:right;">총 입금액</th>
+                <th style="text-align:right;">실 매출</th>
+                <th style="text-align:right;">공단 입금액</th>
+                <th style="text-align:right;">본인부담액</th>
+                <th style="text-align:right;">자부담금액</th>
+                <th style="text-align:right;">후기적합</th>
+                <th style="text-align:right;">미수금액</th>
+                <th style="text-align:right;">누적미수금액</th>
+                <th style="text-align:right;">as비용</th>
+              </tr>
+            </thead>
+            <tbody>
+	              {% if searched %}
+	              {% for r in dep_rows %}
+	              <tr>
+	                <td>{{ r.period }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.qty }}개</td>
+	                <td style="text-align:right;" class="mono">{{ r.total|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.real|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.nhis_deposit|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.copay|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.self_add|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.unpaid|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.unpaid_cum|money }}</td>
+	                <td style="text-align:right;" class="mono">{{ r.as_cost|money }}</td>
+	              </tr>
+	              {% endfor %}
+	              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+{% else %}
+<!-- 매출상세 -->
+<div class="sales-tabs">
+  <button type="button" class="sales-tab js-tab is-active" data-tab="pay">결제일 기준</button>
+  <button type="button" class="sales-tab js-tab" data-tab="dep">입금일 기준</button>
+</div>
+
+<!-- 결제일 기준 (매출상세) -->
+<div id="tab-pay" class="tab-panel">
+  <div class="card" style="border-radius:12px;">
+    <div class="card-head">
+      <div class="card-title">결제일기준</div>
+    </div>
+    <div class="card-body" style="overflow:auto;">
+      <table class="table report-table" style="width:100%; min-width:1400px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">기간</th>
+            <th style="text-align:left;">고객id</th>
+            <th style="text-align:left;">고객명</th>
+            <th style="text-align:right;">보청기 수량</th>
+            <th style="text-align:right;">총 매출</th>
+            <th style="text-align:right;">실 매출</th>
+            <th style="text-align:right;">과세구분</th>
+            <th style="text-align:right;">공단 금액</th>
+            <th style="text-align:right;">본인부담액</th>
+            <th style="text-align:right;">자부담금액</th>
+            <th style="text-align:right;">후기적합</th>
+            <th style="text-align:right;">as비용</th>
+            <th style="text-align:right;">환불</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if searched %}
+            {% for r in detail_pay_rows %}
+              <tr>
+                <td>{{ r.period }}</td>
+                <td class="mono">{{ r.customer_id }}</td>
+                <td>{{ r.customer_name }}</td>
+                <td style="text-align:right;" class="mono">{{ r.qty }}개</td>
+                <td style="text-align:right;" class="mono">{{ r.total|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.real|money }}</td>
+                <td style="text-align:right;"><span class="pill">{{ r.tax_label }}</span></td>
+                <td style="text-align:right;" class="mono">{{ r.nhis|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.copay|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.self_add|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.followup|default:0|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.as_cost|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.refund|money }}</td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 입금일 기준 (매출상세) -->
+<div id="tab-dep" class="tab-panel" style="display:none;">
+  <div class="card" style="border-radius:12px;">
+    <div class="card-head">
+      <div class="card-title">입금일기준</div>
+    </div>
+    <div class="card-body" style="overflow:auto;">
+      <table class="table report-table" style="width:100%; min-width:1500px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">기간</th>
+            <th style="text-align:left;">고객id</th>
+            <th style="text-align:left;">고객명</th>
+            <th style="text-align:right;">보청기 수량</th>
+            <th style="text-align:right;">총 입금액</th>
+            <th style="text-align:right;">실 매출</th>
+            <th style="text-align:right;">공단 입금액</th>
+            <th style="text-align:right;">본인부담액</th>
+            <th style="text-align:right;">자부담금액</th>
+            <th style="text-align:right;">후기적합</th>
+            <th style="text-align:right;">미수금액</th>
+            <th style="text-align:right;">누적미수금액</th>
+            <th style="text-align:right;">as비용</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if searched %}
+            {% for r in detail_dep_rows %}
+              <tr>
+                <td>{{ r.period }}</td>
+                <td class="mono">{{ r.customer_id }}</td>
+                <td>{{ r.customer_name }}</td>
+                <td style="text-align:right;" class="mono">{{ r.qty }}개</td>
+                <td style="text-align:right;" class="mono">{{ r.total|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.real|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.nhis_deposit|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.copay|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.self_add|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.followup|default:0|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.unpaid|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.unpaid_cum|money }}</td>
+                <td style="text-align:right;" class="mono">{{ r.as_cost|money }}</td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+
+  </div>
+</div>
+
+<script>
+(function(){
+  const tabs = document.querySelectorAll('.js-tab');
+  const pay = document.getElementById('tab-pay');
+  const dep = document.getElementById('tab-dep');
+  const hasMainTabs = (tabs && tabs.length && pay && dep);
+  function setActive(which){
+    if(!hasMainTabs) return;
+    tabs.forEach(b=>b.classList.remove('is-active'));
+    if(which === 'dep'){
+      pay.style.display = 'none';
+      dep.style.display = 'block';
+      tabs.forEach(b=>{ if(b.dataset.tab==='dep'){ b.classList.add('is-active'); } });
+    }else{
+      pay.style.display = 'block';
+      dep.style.display = 'none';
+      tabs.forEach(b=>{ if(b.dataset.tab==='pay'){ b.classList.add('is-active'); } });
+    }
+  }
+  if(hasMainTabs){
+    tabs.forEach(btn=>btn.addEventListener('click', ()=>setActive(btn.dataset.tab)));
+    setActive('pay');
+  }
+
+  // 집계 단위가 '월'이면 월(시작월~종료월)만 선택 가능하도록 UI 전환
+  
+  // 주(week) 선택 시: 사용자가 고른 날짜를 해당 주(일~토) 범위로 자동 스냅
+  function _fmtDate(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  }
+  function _snapWeekRange(dateStr){
+    if(!dateStr) return null;
+    const d = new Date(dateStr + 'T00:00:00');
+    if(Number.isNaN(d.getTime())) return null;
+    const day = d.getDay(); // 0=Sun..6=Sat
+    const ws = new Date(d); ws.setDate(d.getDate() - day);
+    const we = new Date(d); we.setDate(d.getDate() + (6 - day));
+    return { start:_fmtDate(ws), end:_fmtDate(we) };
+  }
+  function _applyWeekSnap(which){
+    const gran = document.getElementById('granSelect');
+    if(!gran || gran.value !== 'week') return;
+    const startInput = document.getElementById('startInput');
+    const endInput = document.getElementById('endInput');
+    if(!startInput || !endInput) return;
+
+    if(which === 'start' && startInput.value){
+      const r = _snapWeekRange(startInput.value);
+      if(r){
+        startInput.value = r.start;
+        if(!endInput.value) endInput.value = r.end;
+      }
+    }
+    if(which === 'end' && endInput.value){
+      const r = _snapWeekRange(endInput.value);
+      if(r){
+        endInput.value = r.end;
+        if(!startInput.value) startInput.value = r.start;
+      }
+    }
+
+    // 역순이면 swap
+    if(startInput.value && endInput.value){
+      const s = new Date(startInput.value + 'T00:00:00');
+      const e = new Date(endInput.value + 'T00:00:00');
+      if(s.getTime() > e.getTime()){
+        const tmp = startInput.value;
+        startInput.value = endInput.value;
+        endInput.value = tmp;
+      }
+    }
+  }
+
+function syncGranularityInputs(){
+    const gran = document.getElementById('granSelect');
+    const monthWrap1 = document.getElementById('monthWrap');
+    const monthWrap2 = document.getElementById('monthWrap2');
+    const startMonthInput = document.getElementById('startMonthInput');
+    const endMonthInput = document.getElementById('endMonthInput');
+
+    const startInput = document.getElementById('startInput');
+    const endInput = document.getElementById('endInput');
+    const dateWrap1 = document.getElementById('dateRangeWrap');
+    const dateWrap2 = document.getElementById('dateRangeWrap2');
+    if(!gran) return;
+
+    const isMonth = (gran.value === 'month');
+
+    const isWeek = (gran.value === 'week');
+
+    // UI 노출
+    if(monthWrap1) monthWrap1.style.display = isMonth ? 'block' : 'none';
+    if(monthWrap2) monthWrap2.style.display = isMonth ? 'block' : 'none';
+    if(dateWrap1) dateWrap1.style.display = isMonth ? 'none' : 'block';
+    if(dateWrap2) dateWrap2.style.display = isMonth ? 'none' : 'block';
+
+    // 숨긴 입력은 submit 대상에서 제외
+    if(startInput) startInput.disabled = isMonth;
+    if(endInput) endInput.disabled = isMonth;
+
+    if(startMonthInput) startMonthInput.disabled = !isMonth;
+    if(endMonthInput) endMonthInput.disabled = !isMonth;
+
+    // 월 입력 기본값: 기존 날짜 값이 있으면 연-월로 씨드
+    if(isMonth){
+      const sVal = startInput && startInput.value ? startInput.value : '';
+      const eVal = endInput && endInput.value ? endInput.value : '';
+      if(startMonthInput && !startMonthInput.value && sVal && sVal.length >= 7){
+        startMonthInput.value = sVal.slice(0,7);
+      }
+      if(endMonthInput && !endMonthInput.value && eVal && eVal.length >= 7){
+        endMonthInput.value = eVal.slice(0,7);
+      }
+      // start만 있고 end가 없으면 end를 start로 맞춤
+      if(startMonthInput && endMonthInput && startMonthInput.value && !endMonthInput.value){
+        endMonthInput.value = startMonthInput.value;
+      }
+    }
+    // 주(week)일 때 날짜 선택을 주(일~토)로 자동 스냅
+    if(isWeek){
+      if(startInput && !startInput.dataset.weekSnapBound){
+        startInput.addEventListener('change', ()=>_applyWeekSnap('start'));
+        startInput.dataset.weekSnapBound = '1';
+      }
+      if(endInput && !endInput.dataset.weekSnapBound){
+        endInput.addEventListener('change', ()=>_applyWeekSnap('end'));
+        endInput.dataset.weekSnapBound = '1';
+      }
+      // 현재 값이 있으면 즉시 스냅 적용
+      if(startInput && startInput.value) _applyWeekSnap('start');
+      else if(endInput && endInput.value) _applyWeekSnap('end');
+    }
+
+  }
+
+  const granSelectEl = document.getElementById('granSelect');
+  if(granSelectEl){
+    granSelectEl.addEventListener('change', syncGranularityInputs);
+  }
+  syncGranularityInputs();
+
+  // 다운로드 확인 모달 (msh 커스텀 모달 스타일)
+(function(){
+  const btn = document.getElementById('salesDownloadBtn');
+  const overlay = document.getElementById('mshSalesDlOverlay');
+  const modal = document.getElementById('mshSalesDlModal');
+  const btnCancel = document.getElementById('mshSalesDlCancel');
+  const btnOk = document.getElementById('mshSalesDlOk');
+
+  function openModal(){
+    if(!overlay || !modal) return;
+    overlay.style.display = 'block';
+    modal.style.display = 'block';
+    overlay.setAttribute('aria-hidden', 'false');
+    const ok = document.getElementById('mshSalesDlOk');
+    if(ok) setTimeout(function(){ ok.focus(); }, 0);
+  }
+  function closeModal(){
+    if(!overlay || !modal) return;
+    overlay.style.display = 'none';
+    modal.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  if(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      openModal();
+    });
+  }
+  if(btnCancel){
+    btnCancel.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); closeModal(); });
+  }
+  if(btnOk){
+    // 다운로드 클릭 시 모달 닫기(다운로드는 그대로 진행)
+    btnOk.addEventListener('click', function(){ closeModal(); });
+  }
+  if(overlay){
+    overlay.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); closeModal(); });
+  }
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && modal && modal.style.display === 'block'){
+      closeModal();
+    }
+  });
+})();
+})();
+</script>
+{% endblock %}

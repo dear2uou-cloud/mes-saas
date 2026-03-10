@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>관리자 계정 생성 불가</title>
+  <style>
+    body{ margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Arial; background:#f6f7fb; }
+    .wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .card{ width:420px; background:#fff; border:1px solid #eaecf0; border-radius:16px; box-shadow:0 1px 2px rgba(16,24,40,.06); padding:18px; }
+    h1{ font-size:18px; margin:0 0 10px; }
+    .sub{ color:#475467; font-size:13px; margin-bottom:14px; line-height:1.6; }
+    .btn{ display:block; width:100%; margin-top:14px; padding:11px 12px; border:0; border-radius:12px; background:#111827; color:#fff; font-weight:700; cursor:pointer; text-align:center; text-decoration:none; }
+    .link{ display:block; text-align:center; font-size:13px; color:#475467; text-decoration:none; padding:10px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>관리자 계정 생성 불가</h1>
+      <div class="sub">
+        이미 관리자 계정이 존재합니다.<br/>
+        추가 계정 생성은 운영자(슈퍼유저)가 <b>/admin</b>에서 처리해 주세요.
+      </div>
+      <a class="btn" href="{% url 'login' %}">로그인으로 이동</a>
+      <a class="link" href="/admin/">/admin 바로가기</a>
+    </div>
+  </div>
+</body>
+</html>

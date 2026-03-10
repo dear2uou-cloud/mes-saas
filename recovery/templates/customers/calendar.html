@@ -1,0 +1,705 @@
+{% extends "base.html" %}
+{% load static %}
+{% load dict_extras %}
+
+{% block breadcrumb %}<div class="breadcrumb">캘린더</div>{% endblock %}
+{% block header_title %}<div class="page-title">캘린더</div>{% endblock %}
+
+{% block content %}
+<div class="page-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+  <div style="flex:1;min-width:0;">
+    <div class="cal-subline">
+      <div class="cal-subtext">상담 탭 ‘방문예약’과 연결됩니다.</div>
+      <!-- 버튼은 자리 고정(레이아웃 밀림 방지). OFF일 때는 visibility로 숨김(클릭 불가). -->
+      <button id="addCenterEventBtn" class="chip cal-addbtn" type="button" style="border-style:dashed;">+ 센터일정</button>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center;">
+    <a class="btn" href="?view={{ view }}&date={{ prev_date|date:'Y-m-d' }}{{ extra_qs }}">이전</a>
+    <a class="btn" href="?view={{ view }}&date={{ today|date:'Y-m-d' }}{{ extra_qs }}">오늘</a>
+    <a class="btn" href="?view={{ view }}&date={{ next_date|date:'Y-m-d' }}{{ extra_qs }}">다음</a>
+  </div>
+</div>
+
+<div class="cal-topline">
+  <div class="cal-title">{{ title }}</div>
+
+  <div class="cal-right">
+    <div class="cal-chiprow">
+      <a class="chip {% if view == 'month' %}chip-active{% endif %}" href="?view=month&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}">월</a>
+      <a class="chip {% if view == 'week' %}chip-active{% endif %}" href="?view=week&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}">주</a>
+      <a class="chip {% if view == 'day' %}chip-active{% endif %}" href="?view=day&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}">일</a>
+
+      <div class="chip toggle-chip" aria-label="센터일정 토글">
+        <span class="toggle-label">센터일정</span>
+        <label class="switch" for="toggleCenterEvents">
+          <input id="toggleCenterEvents" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      {% if is_superuser %}
+        <div class="chip toggle-chip" aria-label="취소일정 토글">
+          <span class="toggle-label">취소일정</span>
+          <label class="switch" for="toggleCanceled">
+            <input id="toggleCanceled" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+  /* 캘린더 화면 내 버튼 크기(약 15% 축소) */
+  .page-head .btn{padding:6px 10px;font-size:12px}
+
+  /* 페이지 헤더 하단 라인(설명 + +센터일정 버튼)
+     - 버튼이 나타나도 레이아웃이 아래로 밀리지 않도록 고정 배치 */
+  .cal-subline{margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;}
+  .cal-subtext{color:#6b7280;font-size:13px;line-height:30px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* +센터일정 버튼: 레이아웃 자리는 항상 유지(밀림 방지)
+     - OFF: visibility:hidden + pointer-events:none
+     - ON : visibility:visible + pointer-events:auto */
+  .cal-addbtn{height:30px;visibility:hidden;pointer-events:none;flex:0 0 auto;}
+
+  /* 상단 탭/토글/센터일정 버튼 배치 */
+  .cal-topline{display:flex;justify-content:space-between;align-items:flex-start;margin-top:12px;gap:10px;}
+  .cal-title{font-weight:600;}
+  .cal-right{display:flex;flex-direction:column;align-items:center;gap:10px;}
+  .cal-chiprow{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+
+  .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #e5e7eb;border-radius:999px;padding:5px 8px;font-size:11px;text-decoration:none;color:#111827;background:#fff}
+  .chip:hover{background:#f9fafb}
+  .chip-active{border-color:#c7d2fe;background:#eef2ff}
+
+  .toggle-chip{gap:10px}
+  .toggle-label{font-weight:600}
+  /* iOS 스타일 토글 */
+  .switch{position:relative;display:inline-block;width:38px;height:22px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#d1d5db;transition:.15s;border-radius:999px}
+  .slider:before{position:absolute;content:"";height:18px;width:18px;left:2px;top:2px;background:white;transition:.15s;border-radius:999px;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .switch input:checked + .slider{background:#22c55e}
+  .switch input:checked + .slider:before{transform:translateX(16px)}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+  .cal-cell{border:1px solid #e5e7eb;border-radius:12px;padding:10px;min-height:130px;background:#fff}
+  .hl-date{border-color:#fecaca;background:#fff7f7;}
+  .cal-day{font-weight:600;font-size:13px;margin-bottom:8px}
+  .event{border:1px solid #e5e7eb;border-radius:10px;padding:8px;text-decoration:none;color:#111827;display:block}
+  .event:hover{background:#f9fafb}
+  .event-time{font-size:12px;color:#6b7280;margin-top:2px}
+  .empty{font-size:12px;color:#9ca3af}
+  .week-wrap{display:grid;grid-template-columns:1fr 320px;gap:12px}
+  .side-card{border:1px solid #e5e7eb;border-radius:14px;background:#fff}
+  .side-card .hd{padding:12px 14px;border-bottom:1px solid #eef2f7;font-weight:600}
+  .side-card .bd{padding:12px 14px}
+  .modal-back{position:fixed;inset:0;background:rgba(17,24,39,.45);display:none;align-items:center;justify-content:center;z-index:60}
+  .modal{width:min(520px,calc(100vw - 24px));background:#fff;border-radius:16px;border:1px solid #e5e7eb;box-shadow:0 10px 30px rgba(0,0,0,.12)}
+  .modal .mhd{padding:12px 14px;border-bottom:1px solid #eef2f7;font-weight:700}
+  .modal .mbd{padding:14px}
+  .modal .mft{padding:12px 14px;border-top:1px solid #eef2f7;display:flex;gap:10px;justify-content:flex-end}
+  .btn-plain{border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;background:#fff;cursor:pointer}
+  .btn-plain:hover{background:#f9fafb}
+  .btn-primary{border:1px solid #4f46e5;background:#4f46e5;color:#fff;border-radius:10px;padding:8px 10px;cursor:pointer}
+</style>
+{{ events_by_day|json_script:"eventsByDayJson" }}
+{{ center_events_by_day|json_script:"centerEventsByDayJson" }}
+
+{% if view == 'month' %}
+  <div class="cal-grid" style="margin-top:12px;">
+    {% for d in days %}
+      {% with key=d|date:"Y-m-d" %}
+      <div class="cal-cell {% if highlight_date and key == highlight_date %}hl-date{% endif %}">
+        <div class="cal-day">{{ d|date:"m/d (D)" }}</div>
+          {% with cevents=center_events_by_day|get_item:key %}
+            {% if cevents %}
+              {% for ce in cevents %}
+                <a class="center-event {% if ce.status == 'CANCELED' %}is-canceled{% endif %}" href="javascript:void(0)" onclick="openCenterEventEdit({{ ce.id }}, '{{ ce.type|escapejs }}', '{{ ce.title|escapejs }}', '{{ ce.start|escapejs }}', '{{ ce.end|escapejs }}', '{{ ce.memo|escapejs }}', '{{ ce.created_by|escapejs }}', '{{ ce.status|escapejs }}')">
+                  <div style="font-weight:700;">{{ ce.title }}</div>
+                  <div class="event-time">{{ ce.type }}{% if ce.time %} · {{ ce.time }}{% endif %}{% if ce.created_by %} · {{ ce.created_by }}{% endif %}</div>
+                </a>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+          {% with day_events=events_by_day|get_item:key %}
+          {% if day_events and day_events|length > 1 %}
+            <a class="event {% if e.status == 'CANCELED' %}is-canceled{% endif %}" href="javascript:void(0)" onclick="openDayList('{{ key }}')" style="font-weight:700;">
+              <div>방문예약 {{ day_events|length }}</div>
+              <div class="event-time">목록 보기</div>
+            </a>
+          {% elif day_events and day_events|length == 1 %}
+            {% for e in day_events %}
+              <a class="event {% if e.status == 'CANCELED' %}is-canceled{% endif %}" href="{{ e.url }}">
+                <div>{{ e.title }}</div>
+                <div class="event-time">{{ e.time }}</div>
+              </a>
+            {% endfor %}
+          {% else %}
+            <div class="empty">일정 없음</div>
+          {% endif %}
+        {% endwith %}
+      </div>
+      {% endwith %}
+    {% endfor %}
+  </div>
+
+{% elif view == 'day' %}
+  <div style="margin-top:12px;">
+    {% with key=base_date|date:"Y-m-d" %}
+      {% with cevents=center_events_by_day|get_item:key %}
+        {% if cevents %}
+          {% for ce in cevents %}
+            <a class="center-event {% if ce.status == 'CANCELED' %}is-canceled{% endif %}" href="javascript:void(0)" onclick="openCenterEventEdit({{ ce.id }}, '{{ ce.type|escapejs }}', '{{ ce.title|escapejs }}', '{{ ce.start|escapejs }}', '{{ ce.end|escapejs }}', '{{ ce.memo|escapejs }}', '{{ ce.created_by|escapejs }}', '{{ ce.status|escapejs }}')">
+              <div style="font-weight:700;">{{ ce.title }}</div>
+              <div class="event-time">{{ ce.type }}{% if ce.time %} · {{ ce.time }}{% endif %}{% if ce.created_by %} · {{ ce.created_by }}{% endif %}</div>
+            </a>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      {% for e in events_by_day|get_item:key %}
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;padding:12px;margin-bottom:10px;">
+          <a href="{{ e.url }}" style="text-decoration:none;color:#111827;">
+            <div style="font-weight:700;">{{ e.title }}</div>
+            <div style="font-size:12px;color:#6b7280;margin-top:2px;">{{ e.time }}</div>
+          </a>
+          <button class="btn-plain" onclick="openEdit('{{ e.consultation_id }}','{{ e.dt_value }}','{{ e.title }}')">수정</button>
+        </div>
+      {% empty %}
+        <div class="empty" style="padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;">오늘 일정이 없습니다.</div>
+      {% endfor %}
+    {% endwith %}
+  </div>
+
+{% else %}
+  <div class="week-wrap" style="margin-top:12px;">
+    <div class="cal-grid">
+      {% for d in days %}
+        {% with key=d|date:"Y-m-d" %}
+        <div class="cal-cell {% if highlight_date and key == highlight_date %}hl-date{% endif %}">
+          <div class="cal-day">{{ d|date:"m/d (D)" }}</div>
+            {% with day_events=events_by_day|get_item:key %}
+            {% if day_events and day_events|length > 1 %}
+              <a class="event {% if e.status == 'CANCELED' %}is-canceled{% endif %}" href="javascript:void(0)" onclick="openDayList('{{ key }}')" style="font-weight:700;">
+                <div>방문예약 {{ day_events|length }}</div>
+                <div class="event-time">목록 보기</div>
+              </a>
+            {% elif day_events and day_events|length == 1 %}
+              {% for e in day_events %}
+                <a class="event {% if e.status == 'CANCELED' %}is-canceled{% endif %}" href="{{ e.url }}">
+                  <div>{{ e.title }}</div>
+                  <div class="event-time">{{ e.time }}</div>
+                </a>
+              {% endfor %}
+            {% else %}
+              <div class="empty">일정 없음</div>
+            {% endif %}
+          {% endwith %}
+        </div>
+        {% endwith %}
+      {% endfor %}
+    </div>
+
+    <div class="side-card">
+      <div class="hd">오늘 일정</div>
+      <div class="bd">
+        {% if today_events and today_events|length > 1 %}
+          <div style="border:1px solid #e5e7eb;border-radius:12px;padding:10px;">
+            <a href="javascript:void(0)" onclick="openDayList('{{ today|date:'Y-m-d' }}')" style="text-decoration:none;color:#111827;">
+              <div style="font-weight:700;">방문예약 {{ today_events|length }}</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px;">목록 보기</div>
+            </a>
+          </div>
+        {% else %}
+        {% for e in today_events %}
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin-bottom:8px;">
+            <a href="{{ e.url }}" style="text-decoration:none;color:#111827;">
+              <div style="font-weight:700;">{{ e.title }}</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px;">{{ e.time }}</div>
+            </a>
+            <button class="btn-plain" onclick="openEdit('{{ e.consultation_id }}','{{ e.dt_value }}','{{ e.title }}')">수정</button>
+          </div>
+        {% empty %}
+          <div class="empty">오늘 일정이 없습니다.</div>
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+<!-- Day List Modal -->
+<div id="dayListModalBack" class="modal-back">
+  <div class="modal">
+    <div class="mhd" id="dayListTitle">방문예약 목록</div>
+    <div class="mbd">
+      <div id="dayListBody"></div>
+    </div>
+    <div class="mft">
+      <button type="button" class="btn-plain" onclick="closeDayList()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="modalBack" class="modal-back">
+  <div class="modal">
+    <div class="mhd">방문예약 수정</div>
+    <form id="editForm" method="post">
+      {% csrf_token %}
+      <div class="mbd">
+        <div id="mTitle" style="font-weight:700;margin-bottom:10px;"></div>
+        <label style="display:block;font-size:13px;margin-bottom:6px;">방문예약(일시)</label>
+        <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;">
+          <input id="mDtDate" type="date" class="input" required />
+          <select id="mDtTime" class="input" style="height:42px;" required></select>
+        </div>
+        <input id="mDt" name="visit_reservation_at" type="hidden" required />
+        <div style="height:10px;"></div>
+        <label style="display:block;font-size:13px;margin-bottom:6px;">변경 사유</label>
+        <input id="mReason" name="reason" type="text" class="input" placeholder="예: 고객 요청으로 시간 변경" style="width:100%;" maxlength="120" required />
+        <div style="margin-top:8px;font-size:12px;color:#6b7280;">저장 시 상담 탭 ‘방문예약’도 함께 수정됩니다.</div>
+      </div>
+      <div class="mft">
+        <button type="button" class="btn-plain" onclick="closeEdit()">취소</button>
+        <button type="submit" class="btn-primary">저장</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Confirm Modal (공용) -->
+<div id="confirmModalBack" class="modal-back">
+  <div class="modal">
+    <div class="mhd" id="cfTitle">확인</div>
+    <div class="mbd" id="cfBody"></div>
+    <div class="mft">
+      <button type="button" id="cfNo" class="btn-plain">아니오</button>
+      <button type="button" id="cfYes" class="btn-primary">예</button>
+    </div>
+  </div>
+</div>
+
+<!-- Center Event Modal -->
+<div id="centerEventModalBack" class="modal-back">
+  <div class="modal">
+    <div class="mhd" id="ceTitle">센터 일정</div>
+    <div class="mbd">
+      <form id="centerEventForm" onsubmit="return false;">
+        <input type="hidden" id="ceEventId" />
+        <div style="display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;">
+          <div style="color:#6b7280;">유형</div>
+          <select id="ceType" name="event_type" class="input" style="height:42px;">
+            <option value="휴가">휴가</option>
+            <option value="외근">외근</option>
+            <option value="회의">회의</option>
+            <option value="교육">교육</option>
+            <option value="기타">기타</option>
+          </select>
+
+          <div id="ceTitleRow" style="display:none;grid-column:1 / -1;display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;">
+            <div style="color:#6b7280;">제목</div>
+            <input id="ceTitleInput" name="title" type="text" class="input" placeholder="기타 제목" maxlength="80" style="width:100%;" />
+          </div>
+
+          <div style="color:#6b7280;">시작</div>
+          <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;">
+            <input id="ceStart" name="start_at" type="datetime-local" class="input" />
+            <div></div>
+          </div>
+
+          <div style="color:#6b7280;">종료</div>
+          <div style="display:grid;grid-template-columns:1fr 150px;gap:8px;">
+            <input id="ceEnd" name="end_at" type="datetime-local" class="input" />
+            <div></div>
+          </div>
+
+          <div style="color:#6b7280;">메모</div>
+          <input id="ceMemo" name="memo" type="text" class="input" placeholder="(선택)" maxlength="120" style="width:100%;" />
+        </div>
+      </form>
+      <div id="ceMeta" style="margin-top:10px;font-size:12px;color:#6b7280;"></div>
+    </div>
+    <div class="mft" style="justify-content:space-between;">
+      <button type="button" id="ceDeleteBtn" class="btn-plain" style="color:#ef4444;border-color:#fecaca;">취소</button>
+      <div style="display:flex;gap:10px;">
+        <button type="button" id="ceCancelBtn" class="btn-plain">닫기</button>
+        <button type="button" id="ceSaveBtn" class="btn-primary">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const EVENTS_BY_DAY = JSON.parse(document.getElementById('eventsByDayJson').textContent || '{}');
+
+function buildTenMinuteOptions(selectEl){
+  if(!selectEl) return;
+  if(selectEl.options.length) return;
+  for(let h=0; h<24; h++){
+    for(let m=0; m<60; m+=10){
+      const hh = String(h).padStart(2,'0');
+      const mm = String(m).padStart(2,'0');
+      const opt = document.createElement('option');
+      opt.value = `${hh}:${mm}`;
+      opt.textContent = `${hh}:${mm}`;
+      selectEl.appendChild(opt);
+    }
+  }
+}
+function bindDateTimePair(dateEl, timeEl, hiddenEl){
+  if(!dateEl || !timeEl || !hiddenEl) return;
+  buildTenMinuteOptions(timeEl);
+  const update = ()=>{
+    if(dateEl.value && timeEl.value){
+      hiddenEl.value = `${dateEl.value}T${timeEl.value}`;
+    } else {
+      hiddenEl.value = '';
+    }
+  };
+  dateEl.addEventListener('change', update);
+  timeEl.addEventListener('change', update);
+  update();
+}
+
+function openDayList(key){
+  const back = document.getElementById('dayListModalBack');
+  const title = document.getElementById('dayListTitle');
+  const body = document.getElementById('dayListBody');
+  const items = EVENTS_BY_DAY[key] || [];
+  title.textContent = key + ' 방문예약';
+  body.innerHTML = '';
+  if(!items.length){
+    body.innerHTML = '<div class="empty">일정이 없습니다.</div>';
+  } else {
+    items.forEach((e)=>{
+      const row = document.createElement('a');
+      row.href = e.url;
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.gap = '10px';
+      row.style.textDecoration = 'none';
+      row.style.color = '#111827';
+      row.style.border = '1px solid #e5e7eb';
+      row.style.borderRadius = '12px';
+      row.style.padding = '10px';
+      row.style.marginBottom = '8px';
+      row.innerHTML = `<div style="font-weight:700;">${e.title}</div><div style="font-size:12px;color:#6b7280;">${e.time}</div>`;
+      body.appendChild(row);
+    });
+  }
+  back.style.display = 'flex';
+}
+function closeDayList(){
+  document.getElementById('dayListModalBack').style.display = 'none';
+}
+document.getElementById('dayListModalBack').addEventListener('click', function(e){
+  if(e.target.id === 'dayListModalBack') closeDayList();
+});
+
+  function openEdit(cid, dtValue, title){
+    const back = document.getElementById('modalBack');
+    const form = document.getElementById('editForm');
+    const mTitle = document.getElementById('mTitle');
+    const mDt = document.getElementById('mDt');
+    const mDtDate = document.getElementById('mDtDate');
+    const mDtTime = document.getElementById('mDtTime');
+    const mReason = document.getElementById('mReason');
+
+    mTitle.textContent = title;
+    mDt.value = dtValue;
+    if(dtValue){
+      const [d,t] = dtValue.split('T');
+      mDtDate.value = d;
+      mDtTime.value = t;
+    } else {
+      mDtDate.value='';
+      mDtTime.value='';
+    }
+    bindDateTimePair(mDtDate, mDtTime, mDt);
+    mReason.value = '';
+
+    window._editingConsultationId = cid;
+    form.action = '/customers/calendar/update/' + cid + '/';
+    back.style.display = 'flex';
+  }
+  function closeEdit(){
+    document.getElementById('modalBack').style.display = 'none';
+  }
+  document.getElementById('modalBack').addEventListener('click', function(e){
+    if(e.target.id === 'modalBack') closeEdit();
+  });
+
+  // --- Center events ON/OFF
+  function initCenterEventsToggle(){
+    const btn = document.getElementById('toggleCenterEvents');
+    const addBtn = document.getElementById('addCenterEventBtn');
+    if(!btn) return;
+    const key='centerEventsOn';
+    const IS_SUPER = {{ is_superuser|yesno:"true,false" }};
+    const CANCEL_MODE = {{ cancel_mode|yesno:"true,false" }};
+    const CENTER_ON_PARAM = {{ center_on_param|yesno:"true,false" }};
+    const CENTER_ON_PREF = {{ center_on_pref|yesno:"true,false" }};
+
+    async function savePref(on){
+      try{
+        await fetch('/customers/calendar/prefs/', {
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-CSRFToken': getCsrfToken()},
+          body: JSON.stringify({center_on: on ? 1 : 0})
+        });
+      } catch(e){}
+    }
+
+    // cancel 모드로 들어왔을 때는 URL 기준(서버 필터)과 로컬스토리지를 일치시킵니다.
+    if(IS_SUPER && CANCEL_MODE){
+      localStorage.setItem(key, CENTER_ON_PARAM ? '1' : '0');
+      btn.checked = !!CENTER_ON_PARAM;
+    } else {
+      // 일반 모드는 세션 선호값을 우선 적용
+      localStorage.setItem(key, CENTER_ON_PREF ? '1' : '0');
+      btn.checked = !!CENTER_ON_PREF;
+    }
+    function apply(){
+      const on = (localStorage.getItem(key) ?? '1') === '1';
+      btn.checked = !!on;
+      document.querySelectorAll('.center-event').forEach(el=>{ el.style.display = on ? '' : 'none'; });
+      if(addBtn){
+        const show = (on && !CANCEL_MODE);
+        addBtn.style.visibility = show ? 'visible' : 'hidden';
+        addBtn.style.pointerEvents = show ? 'auto' : 'none';
+      }
+    }
+    btn.addEventListener('change', async ()=>{
+      const nextOn = !!btn.checked;
+      localStorage.setItem(key, nextOn ? '1' : '0');
+      await savePref(nextOn);
+      // 취소 일정 모드에서는 센터 ON/OFF가 '어떤 취소 일정'을 볼지 결정하므로 서버 재조회합니다.
+      if(IS_SUPER && CANCEL_MODE){
+        const url = new URL(window.location.href);
+        url.searchParams.set('center', nextOn ? '1' : '0');
+        url.searchParams.set('cancel', '1');
+        window.location.href = url.toString();
+        return;
+      }
+      apply();
+    });
+    apply();
+  }
+
+  // --- Cancel mode toggle (admin only)
+  function initCanceledToggle(){
+    const btn = document.getElementById('toggleCanceled');
+    if(!btn) return;
+    const IS_SUPER = {{ is_superuser|yesno:"true,false" }};
+    if(!IS_SUPER) return;
+    const CANCEL_MODE = {{ cancel_mode|yesno:"true,false" }};
+    btn.checked = !!CANCEL_MODE;
+
+    async function savePref(on){
+      try{
+        await fetch('/customers/calendar/prefs/', {
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-CSRFToken': getCsrfToken()},
+          body: JSON.stringify({cancel_on: on ? 1 : 0})
+        });
+      } catch(e){}
+    }
+
+    btn.addEventListener('change', async ()=>{
+      const nextOn = !!btn.checked;
+      await savePref(nextOn);
+      const url = new URL(window.location.href);
+      if(nextOn){
+        // centerEventsOn 값을 URL로 넘겨서 서버가 취소 대상(센터/고객)을 확정하도록 합니다.
+        const on = (localStorage.getItem('centerEventsOn') ?? '1') === '1';
+        url.searchParams.set('center', on ? '1' : '0');
+        url.searchParams.set('cancel', '1');
+      } else {
+        url.searchParams.delete('cancel');
+        url.searchParams.delete('center');
+      }
+      window.location.href = url.toString();
+    });
+  }
+
+  // --- modal helpers
+  function openBack(backId){ const el=document.getElementById(backId); if(el) el.style.display='flex'; }
+  function closeBack(backId){ const el=document.getElementById(backId); if(el) el.style.display='none'; }
+
+  function confirmModal(title, html){
+    return new Promise((resolve)=>{
+      const back=document.getElementById('confirmModalBack');
+      document.getElementById('cfTitle').textContent=title||'확인';
+      document.getElementById('cfBody').innerHTML=html||'';
+      const yes=document.getElementById('cfYes');
+      const no=document.getElementById('cfNo');
+      const cleanup=()=>{
+        yes.onclick=null; no.onclick=null;
+        closeBack('confirmModalBack');
+      };
+      yes.onclick=()=>{ cleanup(); resolve(true); };
+      no.onclick=()=>{ cleanup(); resolve(false); };
+      openBack('confirmModalBack');
+    });
+  }
+
+  // --- CenterEvent modal
+  function applyCenterTitleVisibility(){
+    const typeEl = document.getElementById('ceType');
+    const row = document.getElementById('ceTitleRow');
+    if(!typeEl || !row) return;
+    const isEtc = (typeEl.value === '기타');
+    row.style.display = isEtc ? 'contents' : 'none';
+    // 기타가 아니면 title 값은 비워둡니다.
+    if(!isEtc){
+      const ti = document.getElementById('ceTitleInput');
+      if(ti) ti.value = '';
+    }
+  }
+  function openCenterEventCreate(defaultStart){
+    document.getElementById('ceTitle').textContent='센터 일정 추가';
+    document.getElementById('ceEventId').value='';
+    document.getElementById('ceDeleteBtn').style.display='none';
+    const saveBtn = document.getElementById('ceSaveBtn');
+    if(saveBtn) saveBtn.style.display='inline-flex';
+    document.getElementById('ceMeta').textContent='';
+    document.getElementById('ceType').value='휴가';
+    document.getElementById('ceMemo').value='';
+    document.getElementById('ceTitleInput').value='';
+    if(defaultStart){
+      document.getElementById('ceStart').value=defaultStart;
+      document.getElementById('ceEnd').value=defaultStart;
+    }
+    applyCenterTitleVisibility();
+    openBack('centerEventModalBack');
+  }
+  function openCenterEventEdit(id, type, title, start, end, memo, createdBy, status){
+    document.getElementById('ceTitle').textContent='센터 일정 수정';
+    document.getElementById('ceEventId').value=String(id||'');
+    document.getElementById('ceType').value=type||'휴가';
+    document.getElementById('ceTitleInput').value=title||'';
+    document.getElementById('ceStart').value=start||'';
+    document.getElementById('ceEnd').value=end||'';
+    document.getElementById('ceMemo').value=memo||'';
+    document.getElementById('ceMeta').textContent = createdBy ? ('등록자 · '+createdBy) : '';
+    const isCanceled = (status === 'CANCELED');
+    document.getElementById('ceDeleteBtn').style.display = isCanceled ? 'none' : 'inline-flex';
+    const saveBtn = document.getElementById('ceSaveBtn');
+    if(saveBtn) saveBtn.style.display = isCanceled ? 'none' : 'inline-flex';
+    if(isCanceled){
+      document.getElementById('ceMeta').textContent = (document.getElementById('ceMeta').textContent || '') + ' · 취소됨';
+    }
+    applyCenterTitleVisibility();
+    openBack('centerEventModalBack');
+  }
+  async function postForm(url, data){
+    const resp = await fetch(url, {
+      method:'POST',
+      headers:{'X-CSRFToken': getCsrfToken()},
+      body: data
+    });
+    return await resp.json();
+  }
+
+  function getCsrfToken(){
+    const name='csrftoken';
+    const m=document.cookie.match(new RegExp('(^| )'+name+'=([^;]+)'));
+    return m ? decodeURIComponent(m[2]) : '';
+  }
+
+  function bindCenterEventModal(){
+    const addBtn=document.getElementById('addCenterEventBtn');
+    if(addBtn) addBtn.addEventListener('click', ()=>openCenterEventCreate());
+    const cancel=document.getElementById('ceCancelBtn');
+    const save=document.getElementById('ceSaveBtn');
+    const del=document.getElementById('ceDeleteBtn');
+    const typeEl=document.getElementById('ceType');
+    if(typeEl) typeEl.addEventListener('change', applyCenterTitleVisibility);
+    if(cancel) cancel.addEventListener('click', ()=>closeBack('centerEventModalBack'));
+    if(save) save.addEventListener('click', async ()=>{
+      const id=document.getElementById('ceEventId').value;
+      const fd=new FormData(document.getElementById('centerEventForm'));
+      // 기타가 아니면 제목 전송 안함
+      if((document.getElementById('ceType').value||'') !== '기타'){
+        fd.set('title','');
+      }
+      const url = id ? ('/customers/center-events/'+id+'/update/') : '/customers/center-events/create/';
+      const res = await postForm(url, fd);
+      if(res && res.ok){
+        window.location.reload();
+      }else{
+        let msg = '<div class="muted">입력값을 확인해 주세요.</div>';
+        if(res && res.error === 'need_title') msg = '<div class="muted">유형이 기타일 때는 제목이 필요합니다.</div>';
+        await confirmModal('저장 실패', msg);
+      }
+    });
+    if(del) del.addEventListener('click', async ()=>{
+      const id=document.getElementById('ceEventId').value;
+      if(!id) return;
+      const ok = await confirmModal('취소', '<div class="muted">현재 일정을 취소하시겠습니까?</div>');
+      if(!ok) return;
+      const fd=new FormData();
+      const res = await postForm('/customers/center-events/'+id+'/cancel/', fd);
+      if(res && res.ok) window.location.reload();
+    });
+  }
+
+  // --- Reservation conflict warning for calendar update
+  async function checkConflict(at, excludeId){
+    const url = `/customers/api/reservation-conflict/?at=${encodeURIComponent(at)}&exclude=${encodeURIComponent(excludeId||'')}`;
+    const resp = await fetch(url);
+    return await resp.json();
+  }
+
+  async function beforeSubmitReservation(formEl, at, excludeId){
+    // past date restriction (staff blocked, superuser only)
+    const isSuper = {{ is_superuser|yesno:"true,false" }};
+    try{
+      const d = at.split('T')[0];
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth()+1).padStart(2,'0');
+      const da = String(today.getDate()).padStart(2,'0');
+      const todayStr = `${y}-${m}-${da}`;
+      if(d < todayStr && !isSuper){
+        await confirmModal('수정 불가', '<div class="muted">과거 날짜 예약은 관리자만 수정할 수 있습니다.</div>');
+        return false;
+      }
+    }catch(e){}
+    const info = await checkConflict(at, excludeId);
+    if(info && info.count && info.count > 0){
+      let list = info.items.map(it=>`<div style="margin-top:6px;"><b>${it.customer_name}</b> · ${it.time}</div>`).join('');
+      const ok = await confirmModal('중복 예약 경고', `<div class="muted">동일 시간대에 예약이 잡혀있습니다. 그래도 예약을 하겠습니까?</div>${list}`);
+      return ok;
+    }
+    return true;
+  }
+
+  function initCenterEventsToggleAndBindings(){
+    initCenterEventsToggle();
+    initCanceledToggle();
+    bindCenterEventModal();
+  }
+  // --- Boot
+  document.addEventListener('DOMContentLoaded', function(){
+    // center events toggle + modal bindings
+    initCenterEventsToggleAndBindings();
+
+    // 예약 수정 폼 submit 가드(과거/중복 경고)
+    const editForm = document.getElementById('editForm');
+    if(editForm){
+      editForm.addEventListener('submit', async function(e){
+        e.preventDefault();
+        const at = document.getElementById('mDt').value || '';
+        const cid = window._editingConsultationId || '';
+        const ok = await beforeSubmitReservation(editForm, at, cid);
+        if(!ok) return;
+        editForm.submit();
+      });
+    }
+  });
+</script>
+
+{% endblock %}

@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}업로드 관리{% endblock %}
+
+{% block breadcrumb %}<div class="breadcrumb">설정 / 업로드 관리</div>{% endblock %}
+{% block header_title %}<div class="page-title">업로드 관리</div>{% endblock %}
+
+{% block content %}
+<style>
+  .inv-modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;}
+  .inv-modal{width:min(680px, 92vw); background:#fff; border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.18); overflow:hidden;}
+  .inv-modal-header{display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid #eee;}
+  .inv-modal-title{font-weight:800;}
+  .inv-modal-body{padding:16px;}
+  .inv-modal-actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; justify-content:flex-end;}
+  .inv-modal-close{border:none; background:transparent; font-size:20px; cursor:pointer; line-height:1;}
+  .inv-help{margin-top:12px; padding:12px; background:rgba(0,0,0,.03); border:1px solid rgba(0,0,0,.06); border-radius:12px; color:#6b7280; font-size:13px; line-height:1.55;}
+  .inv-upload-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+</style>
+
+<div class="card">
+  <div class="card-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div>
+      <div class="card-title">CSV 고객 업로드</div>
+      <div class="muted" style="margin-top:6px;">설정 &gt; 업로드 관리 (관리자만)</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <a class="btn" href="/customers/settings/upload-management/template/basic/">양식 다운로드(기본)</a>
+      <a class="btn" href="/customers/settings/upload-management/template/rrn/">양식 다운로드(주민번호 포함)</a>
+      <button class="btn primary" type="button" onclick="umOpen('umUploadModal')">CSV 업로드</button>
+    </div>
+  </div>
+
+  <div class="card-body">
+    <div id="umResult" style="display:none;"></div>
+    <div class="inv-help">
+      - CSV 파일명은 영문만 가능합니다. 예) <span class="mono">customer_upload_basic.csv</span><br/>
+      - 인코딩: UTF-8 (권장: UTF-8 BOM)<br/>
+      - 날짜: YYYY-MM-DD (YYYY/MM/DD, YYYY.MM.DD도 자동 인식)<br/>
+      - 금액: <span class="mono">1000000</span> 또는 <span class="mono">1,000,000</span> 허용<br/>
+      - 후기 기간: <span class="mono">YYYY-MM-DD~YYYY-MM-DD</span> (또는 <span class="mono">YYYY-MM-DD - YYYY-MM-DD</span>)<br/>
+      - 고객ID가 비어있으면 신규 생성(서버 자동 발급)
+      - 고객ID가 이미 존재하는 경우: "중복"으로 처리되며 반영되지 않습니다.
+    </div>
+  </div>
+</div>
+
+<!-- 업로드 결과 모달 -->
+<div id="umResultModal" class="inv-modal-backdrop" onclick="if(event.target===this) umClose('umResultModal')">
+  <div class="inv-modal" style="width:min(760px, 94vw);">
+    <div class="inv-modal-header">
+      <div class="inv-modal-title">업로드 결과</div>
+      <button class="inv-modal-close" type="button" onclick="umClose('umResultModal')">×</button>
+    </div>
+    <div class="inv-modal-body">
+      <div id="umResultBody"></div>
+      <div class="inv-modal-actions">
+        <button class="btn" type="button" onclick="umClose('umResultModal')">닫기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 업로드 모달 -->
+<div id="umUploadModal" class="inv-modal-backdrop" onclick="if(event.target===this) umClose('umUploadModal')">
+  <div class="inv-modal">
+    <div class="inv-modal-header">
+      <div class="inv-modal-title">CSV 업로드</div>
+      <button class="inv-modal-close" type="button" onclick="umClose('umUploadModal')">×</button>
+    </div>
+    <div class="inv-modal-body">
+      <div class="inv-upload-row">
+        <input class="input" type="file" id="umCsvFile" accept=".csv,text/csv" style="max-width:520px;" />
+        <button class="btn primary" type="button" onclick="umUpload()">업로드</button>
+      </div>
+      <div id="umUploadStatus" class="muted" style="margin-top:10px;"></div>
+      <div class="inv-help">
+        - 업로드 후 결과(성공/실패)가 화면에 표시됩니다.<br/>
+        - 실패 행이 있으면 실패 행만 다운로드하여 수정 후 재업로드하세요.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 중복 확인 모달 -->
+<div id="umDupModal" class="inv-modal-backdrop" onclick="if(event.target===this) umClose('umDupModal')">
+  <div class="inv-modal" style="width:min(560px, 92vw);">
+    <div class="inv-modal-header">
+      <div class="inv-modal-title">중복 고객 확인</div>
+      <button class="inv-modal-close" type="button" onclick="umClose('umDupModal')">×</button>
+    </div>
+    <div class="inv-modal-body">
+      <div style="font-weight:800; margin-bottom:8px;">이미 존재하는 고객ID가 발견되었습니다.</div>
+      <div class="muted">아래 고객ID는 업데이트(덮어쓰기)로 진행됩니다. 계속 진행하시겠습니까?</div>
+      <div id="umDupList" class="mono" style="margin-top:10px; padding:10px; border:1px solid rgba(0,0,0,.08); border-radius:12px; background:rgba(0,0,0,.02); max-height:180px; overflow:auto;"></div>
+      <div class="inv-modal-actions">
+        <button class="btn primary" type="button" onclick="umConfirmDup(true)">진행</button>
+        <button class="btn" type="button" onclick="umConfirmDup(false)">취소</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function umOpen(id){
+    document.getElementById(id).style.display='flex';
+  }
+  function umClose(id){
+    document.getElementById(id).style.display='none';
+  }
+
+  function umSetStatus(msg){
+    document.getElementById('umUploadStatus').textContent = msg || '';
+  }
+
+  function umIsEnglishFilename(name){
+    return /^[A-Za-z0-9._-]+$/.test(name || '');
+  }
+
+  let umPendingDupToken = null;
+  // 실패행 CSV 원문 저장(모달 다운로드 버튼에서 사용)
+  window.umLastFailedCsv = '';
+
+  async function umUpload(){
+    const f = document.getElementById('umCsvFile').files[0];
+    if(!f){ umSetStatus('CSV 파일을 선택해 주세요.'); return; }
+    if(!f.name.toLowerCase().endsWith('.csv')){ umSetStatus('CSV 파일만 업로드 가능합니다.'); return; }
+    if(!umIsEnglishFilename(f.name)){
+      umSetStatus('CSV 파일명은 영문/숫자/._- 만 가능합니다.');
+      return;
+    }
+    umSetStatus('업로드 중...');
+
+    const fd = new FormData();
+    fd.append('csv_file', f);
+
+    const res = await fetch('/customers/settings/upload-management/api/upload/', {
+      method: 'POST',
+      headers: {'X-CSRFToken': (document.querySelector('input[name=csrfmiddlewaretoken]')||{}).value || '{{ csrf_token }}' },
+      body: fd
+    });
+    const data = await res.json().catch(()=>({ok:false, error:'서버 응답 파싱 실패'}));
+    if(!data.ok){
+      umSetStatus(data.error || '업로드 실패');
+      return;
+    }
+    if(data.status === 'duplicate'){
+      umPendingDupToken = data.token;
+      document.getElementById('umDupList').textContent = (data.duplicate_ids || []).map(x=>'#'+x).join(', ');
+      umClose('umUploadModal');
+      umOpen('umDupModal');
+      umSetStatus('');
+      return;
+    }
+    umClose('umUploadModal');
+    umSetStatus('');
+    umRenderResult(data);
+  }
+
+  async function umConfirmDup(go){
+    if(!go){
+      umPendingDupToken = null;
+      umClose('umDupModal');
+      umOpen('umUploadModal');
+      umSetStatus('중복 확인이 취소되었습니다.');
+      return;
+    }
+    if(!umPendingDupToken){
+      umClose('umDupModal');
+      umOpen('umUploadModal');
+      umSetStatus('처리 토큰이 없습니다. 다시 업로드해 주세요.');
+      return;
+    }
+
+    umClose('umDupModal');
+    umOpen('umUploadModal');
+    umSetStatus('중복 업데이트 진행 중...');
+
+    const fd = new FormData();
+    fd.append('token', umPendingDupToken);
+    fd.append('confirm_duplicate', '1');
+
+    const res = await fetch('/customers/settings/upload-management/api/upload/', {
+      method: 'POST',
+      headers: {'X-CSRFToken': (document.querySelector('input[name=csrfmiddlewaretoken]')||{}).value || '{{ csrf_token }}' },
+      body: fd
+    });
+    const data = await res.json().catch(()=>({ok:false, error:'서버 응답 파싱 실패'}));
+    if(!data.ok){
+      umSetStatus(data.error || '업데이트 실패');
+      return;
+    }
+    umPendingDupToken = null;
+    umClose('umUploadModal');
+    umSetStatus('');
+    umRenderResult(data);
+  }
+
+  function umDownloadText(filename, text){
+    const blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 500);
+  }
+
+  function umDownloadFailed(){
+    if(!window.umLastFailedCsv){
+      alert('다운로드할 실패 행이 없습니다.');
+      return;
+    }
+    umDownloadText('failed_rows.csv', window.umLastFailedCsv);
+  }
+
+  function umRenderResult(data){
+    const wrap = document.getElementById('umResult');
+    const modalBody = document.getElementById('umResultBody');
+    const ok = data.success_count || 0;
+    const fail = data.fail_count || 0;
+    const dup = data.duplicate_count || 0;
+    let html = '';
+    html += `<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+      <span class="badge" style="background:rgba(16,185,129,.15); color:#065f46; font-weight:900;">성공 ${ok}건</span>
+      <span class="badge" style="background:rgba(59,130,246,.12); color:#1e3a8a; font-weight:900;">중복 ${dup}건</span>
+      <span class="badge" style="background:rgba(239,68,68,.12); color:#991b1b; font-weight:900;">실패 ${fail}건</span>
+    </div>`;
+
+    if(dup > 0){
+      html += `<div style="margin-bottom:10px;">중복 고객은 반영되지 않습니다.</div>`;
+    }
+
+    if(fail > 0){
+      html += `<div style="margin-bottom:10px;">실패 행이 있습니다. 실패 행만 다운로드하여 수정 후 재업로드하세요.</div>`;
+      window.umLastFailedCsv = data.failed_csv || '';
+      html += `<button class="btn" type="button" onclick="umDownloadFailed()">실패 행 다운로드</button>`;
+      const rows = (data.failures || []).slice();
+      html += `<div style="margin-top:12px; overflow:auto;">
+        <table class="table" style="min-width:720px;">
+          <thead><tr><th style="width:90px;">행</th><th>사유</th></tr></thead>
+          <tbody>
+            ${rows.map(r=>`<tr><td class="mono">${r.row}</td><td>${(r.reason||'')}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    } else {
+      window.umLastFailedCsv = '';
+      html += `<div>업로드가 완료되었습니다.</div>`;
+    }
+
+    // 카드 영역에는 간단 요약만 남기고, 상세는 모달로 표시
+    wrap.innerHTML = `<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <span class="badge" style="background:rgba(16,185,129,.15); color:#065f46; font-weight:900;">성공 ${ok}건</span>
+      <span class="badge" style="background:rgba(59,130,246,.12); color:#1e3a8a; font-weight:900;">중복 ${dup}건</span>
+      <span class="badge" style="background:rgba(239,68,68,.12); color:#991b1b; font-weight:900;">실패 ${fail}건</span>
+      <button class="btn" type="button" onclick="umOpen('umResultModal')">결과 보기</button>
+    </div>`;
+    wrap.style.display = 'block';
+
+    modalBody.innerHTML = html;
+    umOpen('umResultModal');
+  }
+</script>
+
+<!-- csrf token fallback for fetch header -->
+<form style="display:none;">{% csrf_token %}</form>
+{% endblock %}

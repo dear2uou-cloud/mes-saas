@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}설정{% endblock %}
+
+{% block breadcrumb %}<div class="breadcrumb">설정</div>{% endblock %}
+{% block header_title %}<div class="page-title">설정</div>{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">설정 메뉴</div>
+  </div>
+  <div class="card-body" style="display:flex; gap:12px; flex-wrap:wrap;">
+    <a class="btn" href="/customers/settings/profile/">프로필</a>
+    <a class="btn" href="/customers/settings/inventory-history/">재고 히스토리</a>
+    {% if request.user.is_staff or request.user.is_superuser %}
+      <a class="btn" href="/customers/settings/upload-management/">업로드 관리</a>
+    {% endif %}
+    {% if request.user.is_staff or request.user.is_superuser %}
+      <a class="btn" href="/customers/settings/sales-analysis/">매출분석</a>
+    {% endif %}
+    <a class="btn" href="/customers/settings/trash/">휴지통</a>
+    {% if request.user.is_superuser %}
+      <a class="btn" href="/customers/settings/access-logs/">접근 로그</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

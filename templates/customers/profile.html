@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}프로필{% endblock %}
+{% block header_title %}Profile{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --dash-border: rgba(226, 232, 240, 0.95);
+        --dash-bg: #f8fafc;
+        --dash-card: #ffffff;
+        --dash-text: #0f172a;
+        --dash-sub: #64748b;
+        --dash-muted: #94a3b8;
+        --dash-blue: #2f80ed;
+        --dash-blue-soft: rgba(47, 128, 237, 0.12);
+        --dash-green: #16a34a;
+        --dash-red: #ef4444;
+        --dash-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+        --dash-radius: 20px;
+    }
+
+    .profile-card {
+        background: var(--dash-card);
+        border: 1px solid var(--dash-border);
+        border-radius: var(--dash-radius);
+        box-shadow: var(--dash-shadow);
+        overflow: hidden;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    .profile-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--dash-border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #fff;
+    }
+
+    .profile-title {
+        font-size: 18px;
+        font-weight: 800;
+        color: var(--dash-text);
+    }
+
+    .profile-body {
+        padding: 24px;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .form-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--dash-sub);
+    }
+
+    .input-field {
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        outline: none;
+        font-size: 14px;
+        color: var(--dash-text);
+        background: #fff;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-field:focus {
+        border-color: var(--dash-blue);
+        box-shadow: 0 0 0 3px var(--dash-blue-soft);
+    }
+
+    .full-width { grid-column: 1 / -1; }
+
+    .btn-action {
+        padding: 10px 18px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 700;
+        border: none;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+    }
+
+    .btn-primary { background: var(--dash-blue); color: #fff; }
+    .btn-primary:hover { background: #2563eb; transform: translateY(-1px); }
+
+    .btn-white { background: #fff; border: 1px solid var(--dash-border); color: var(--dash-sub); }
+    .btn-white:hover { background: #f8fafc; color: var(--dash-text); }
+
+    .alert-box {
+        padding: 14px 16px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+    
+    .alert-success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    .alert-danger { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .alert-info { background: #eff6ff; color: #1e40af; border: 1px solid #dbeafe; }
+
+    .help-text { font-size: 12px; color: var(--dash-muted); margin-top: 4px; }
+</style>
+
+<div class="page-container">
+    <div class="profile-card">
+        <div class="profile-header">
+            <div class="profile-title">사업자(센터) 프로필</div>
+            <a href="/customers/settings/" class="btn-action btn-white">← 설정으로</a>
+        </div>
+
+        <div class="profile-body">
+            {% if saved %}
+                <div class="alert-box alert-success">✅ 저장되었습니다.</div>
+            {% endif %}
+
+            {% if form.non_field_errors %}
+                <div class="alert-box alert-danger">{{ form.non_field_errors }}</div>
+            {% endif %}
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">사업자명</label>
+                        {{ form.business_name }} <!-- class="input-field"는 Django widget에서 적용 필요 -->
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">대표자명</label>
+                        {{ form.representative_name }}
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">사업자등록번호</label>
+                        {{ form.business_reg_no }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">사업자 연락처</label>
+                        {{ form.business_phone }}
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label class="form-label">사업자 주소</label>
+                        {{ form.business_address }}
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">업태</label>
+                        {{ form.business_type }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">종목</label>
+                        {{ form.business_item }}
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">은행</label>
+                        {{ form.bank_name }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">계좌번호</label>
+                        {{ form.bank_account }}
+                    </div>
+
+                    {% if request.user.is_superuser or request.user.is_staff %}
+                    <div class="form-group full-width">
+                        <label class="form-label">상담 리마인드 기준(일)</label>
+                        {{ form.consultation_reminder_days }}
+                        <div class="help-text">기본값 30일 · 보류 상담이 이 기간을 넘기면 리마인드 배지가 표시됩니다.</div>
+                    </div>
+                    {% endif %}
+
+                    <div class="form-group full-width" style="margin-top: 10px; padding-top: 20px; border-top: 1px solid #f1f5f9;">
+                        <label class="form-label">대표자 주민등록번호</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <div id="rrnMasked" class="input-field" style="flex:1; background:#f8fafc; color:#64748b;">
+                                {{ rep_rrn_masked|default:"미입력" }}
+                            </div>
+                            <button id="btnRrnEdit" type="button" class="btn-action btn-white">{% if rep_rrn_masked %}수정{% else %}입력{% endif %}</button>
+                            {% if can_view_full_rrn %}
+                                <button id="btnReveal" type="button" class="btn-action btn-white">전체 보기(60초)</button>
+                            {% endif %}
+                        </div>
+                        <div id="rrnEditBox" style="margin-top:10px; display:none;">
+                            {{ form.rep_rrn_full }}
+                            <div class="help-text">주민등록번호 13자리를 입력 후 저장하세요. (기존 값은 마스킹으로만 노출됩니다.)</div>
+                        </div>
+                    </div>
+                </div>
+
+                {% if consent_required %}
+                    <div class="alert-box alert-info" style="margin-top:24px;">
+                        <div style="font-weight:700; margin-bottom:8px;">사업자 정보 이용 동의</div>
+                        <label style="display:flex; gap:10px; align-items:flex-start;">
+                            <input type="checkbox" name="consent_agree" style="margin-top:4px;" />
+                            <span style="font-size:13px; line-height:1.5;">{{ consent_text|linebreaksbr }}</span>
+                        </label>
+                        <div class="help-text" style="margin-top:8px;">동의 체크 후 저장해야 프로필 기능을 사용할 수 있습니다.</div>
+                    </div>
+                {% else %}
+                    <div class="alert-box alert-success" style="margin-top:24px;">
+                        <div style="font-weight:700; margin-bottom:4px;">동의 완료됨</div>
+                        <div style="font-size:13px; opacity:0.8;">{{ consent_text|linebreaksbr }}</div>
+                    </div>
+                {% endif %}
+
+                <div style="margin-top:24px; display:flex; justify-content:flex-end; gap:10px;">
+                    <a href="/customers/settings/" class="btn-action btn-white">취소</a>
+                    <button type="submit" class="btn-action btn-primary">저장하기</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 기존 Django 폼 위젯에 스타일 클래스 강제 주입
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('input[type="text"], input[type="number"]').forEach(el => {
+            el.classList.add('input-field');
+            el.style.width = '100%';
+        });
+
+        // 주민번호 로직 복원
+        var btnEdit = document.getElementById('btnRrnEdit');
+        var editBox = document.getElementById('rrnEditBox');
+        if(btnEdit && editBox){
+            var initialLabel = btnEdit.textContent;
+            btnEdit.addEventListener('click', function(){
+                var isOpen = (editBox.style.display !== 'none');
+                if(isOpen){
+                    editBox.style.display = 'none';
+                    btnEdit.textContent = initialLabel;
+                } else {
+                    editBox.style.display = 'block';
+                    btnEdit.textContent = '닫기';
+                    var inp = editBox.querySelector('input');
+                    if(inp) inp.focus();
+                }
+            });
+        }
+
+        // 주민번호 자동 포맷
+        var rrnInput = document.querySelector('#rrnEditBox input');
+        if(rrnInput){
+            rrnInput.addEventListener('input', function(){
+                var v = rrnInput.value.replace(/\D/g,'').slice(0,13);
+                if(v.length > 6) v = v.slice(0,6) + '-' + v.slice(6);
+                if(rrnInput.value !== v) rrnInput.value = v;
+            });
+        }
+
+        {% if can_view_full_rrn %}
+        var btnReveal = document.getElementById('btnReveal');
+        var box = document.getElementById('rrnMasked');
+        if(btnReveal && box){
+            var masked = box.textContent;
+            var timer = null;
+            function reMask(){ box.textContent = masked; if(timer) clearTimeout(timer); }
+            btnReveal.addEventListener('click', function(){
+                fetch('/customers/settings/profile/reveal-rrn/', {headers:{'X-Requested-With':'XMLHttpRequest'}})
+                    .then(r => r.json())
+                    .then(res => {
+                        if(res.ok){
+                            box.textContent = res.rrn;
+                            if(timer) clearTimeout(timer);
+                            timer = setTimeout(reMask, 60000);
+                        } else {
+                            alert('권한이 없습니다.');
+                        }
+                    });
+            });
+        }
+        {% endif %}
+    });
+</script>
+{% endblock %}

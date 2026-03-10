@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>관리자 계정 생성</title>
+  <style>
+    body{ margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Arial; background:#f6f7fb; }
+    .wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .card{ width:420px; background:#fff; border:1px solid #eaecf0; border-radius:16px; box-shadow:0 1px 2px rgba(16,24,40,.06); padding:18px; }
+    h1{ font-size:18px; margin:0 0 10px; }
+    .sub{ color:#475467; font-size:13px; margin-bottom:14px; line-height:1.5; }
+    label{ display:block; font-size:13px; color:#344054; margin:10px 0 6px; }
+    input{ width:100%; padding:10px 12px; border:1px solid #d0d5dd; border-radius:12px; font-size:14px; }
+    .btn{ width:100%; margin-top:14px; padding:11px 12px; border:0; border-radius:12px; background:#111827; color:#fff; font-weight:700; cursor:pointer; }
+    .row{ display:flex; gap:10px; margin-top:10px; }
+    .link{ display:block; text-align:center; font-size:13px; color:#475467; text-decoration:none; padding:10px 0 0; }
+    .msg{ margin:10px 0 0; font-size:13px; }
+    .msg.error{ color:#b42318; }
+    .msg.ok{ color:#027a48; }
+    ul.errorlist{ margin:6px 0 0; padding-left:18px; color:#b42318; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>관리자 계정 생성</h1>
+      <div class="sub">
+        초기 1회만 가능합니다.<br/>
+        생성된 계정은 <b>관리자(Staff)</b> 권한으로 저장됩니다.
+      </div>
+
+      {% if messages %}
+        {% for message in messages %}
+          <div class="msg {% if message.tags %}{{ message.tags }}{% endif %}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        <label for="id_username">아이디</label>
+        {{ form.username }}
+        {{ form.username.errors }}
+
+        <label for="id_password1">비밀번호</label>
+        {{ form.password1 }}
+        {{ form.password1.errors }}
+
+        <label for="id_password2">비밀번호 확인</label>
+        {{ form.password2 }}
+        {{ form.password2.errors }}
+
+        <button class="btn" type="submit">관리자 계정 생성</button>
+      </form>
+
+      <a class="link" href="{% url 'login' %}">로그인으로 돌아가기</a>
+    </div>
+  </div>
+</body>
+</html>

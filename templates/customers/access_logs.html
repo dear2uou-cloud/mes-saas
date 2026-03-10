@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}접근 로그{% endblock %}
+{% block header_title %}Access Logs{% endblock %}
+
+{% block content %}
+<style>
+  :root{ --dash-border: rgba(226,232,240,.95); --dash-card:#fff; --dash-text:#0f172a; --dash-sub:#64748b; --dash-muted:#94a3b8; --dash-shadow:0 10px 30px rgba(15,23,42,.04); --dash-radius:20px; }
+  .page-container{ display:flex; flex-direction:column; gap:18px; }
+  .list-card{ background:#fff; border:1px solid var(--dash-border); border-radius:var(--dash-radius); box-shadow:var(--dash-shadow); overflow:hidden; }
+  .modern-table{ width:100%; border-collapse:collapse; text-align:left; }
+  .modern-table th{ background:#f8fafc; padding:14px 20px; font-size:12px; font-weight:800; color:var(--dash-sub); border-bottom:1px solid var(--dash-border); }
+  .modern-table td{ padding:12px 16px; border-bottom:1px solid #f1f5f9; font-size:13px; color:var(--dash-text); vertical-align:middle; }
+</style>
+
+<div class="page-container">
+  <div class="list-card">
+    <div class="card-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--dash-border);">
+      <div style="font-weight:800; color:var(--dash-text);">접근/동의 로그 (최근 500건)</div>
+      <a class="btn" href="/customers/settings/">설정으로</a>
+    </div>
+    <div style="padding:16px; font-weight:700;">동의 로그</div>
+    <div style="overflow:auto;">
+      <table class="modern-table" style="min-width:720px;">
+        <thead>
+          <tr>
+            <th>시간</th>
+            <th>계정</th>
+            <th>IP</th>
+            <th>User-Agent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in consent_logs %}
+          <tr>
+            <td>{{ row.created_at }}</td>
+            <td>{{ row.user }}</td>
+            <td>{{ row.ip }}</td>
+            <td>{{ row.user_agent }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" style="padding:14px; color:var(--dash-muted);">동의 로그가 없습니다.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="padding:16px; font-weight:700;">민감정보 접근 로그</div>
+    <div style="overflow:auto;">
+      <table class="modern-table" style="min-width:720px;">
+        <thead>
+          <tr>
+            <th>시간</th>
+            <th>계정</th>
+            <th>동작</th>
+            <th>IP</th>
+            <th>User-Agent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in access_logs %}
+          <tr>
+            <td>{{ row.created_at }}</td>
+            <td>{{ row.user }}</td>
+            <td>{{ row.get_action_display }}</td>
+            <td>{{ row.ip }}</td>
+            <td>{{ row.user_agent }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" style="padding:14px; color:var(--dash-muted);">접근 로그가 없습니다.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

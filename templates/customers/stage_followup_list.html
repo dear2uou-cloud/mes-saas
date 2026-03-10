@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}후기적합{% endblock %}
+
+{% block header_title %}후기적합{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --dash-border: rgba(226, 232, 240, 0.95);
+        --dash-bg: #f8fafc;
+        --dash-card: #ffffff;
+        --dash-text: #0f172a;
+        --dash-sub: #64748b;
+        --dash-muted: #94a3b8;
+        --dash-blue: #2f80ed;
+        --dash-blue-soft: rgba(47, 128, 237, 0.12);
+        --dash-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+        --dash-radius: 20px;
+    }
+
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+    }
+
+    .control-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        background: #fff;
+        padding: 12px 16px;
+        border-radius: 16px;
+        border: 1px solid var(--dash-border);
+        box-shadow: var(--dash-shadow);
+    }
+
+    .search-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #f8fafc;
+        border: 1px solid var(--dash-border);
+        border-radius: 10px;
+        padding: 4px 8px;
+        flex: 1;
+        max-width: 300px;
+    }
+
+    .search-input {
+        border: none;
+        outline: none;
+        background: transparent;
+        padding: 6px;
+        font-size: 14px;
+        color: var(--dash-text);
+        width: 100%;
+    }
+
+    .btn-search {
+        background: var(--dash-blue);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    .list-card {
+        background: #fff;
+        border: 1px solid var(--dash-border);
+        border-radius: var(--dash-radius);
+        box-shadow: var(--dash-shadow);
+        overflow: hidden;
+    }
+
+    .modern-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+    }
+
+    .modern-table th {
+        background: #f8fafc;
+        padding: 14px 20px;
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--dash-sub);
+        border-bottom: 1px solid var(--dash-border);
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+    }
+
+    .modern-table td {
+        padding: 14px 20px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 14px;
+        color: var(--dash-text);
+        vertical-align: middle;
+    }
+
+    .modern-table tr:last-child td { border-bottom: none; }
+    .modern-table tr:hover td { background: #fdfdfd; }
+
+    .user-cell { display: flex; align-items: center; gap: 12px; }
+    .user-info { display: flex; flex-direction: column; gap: 2px; }
+    .user-name { font-weight: 700; color: var(--dash-text); font-size: 14px; }
+    .user-sub { font-size: 12px; color: var(--dash-muted); }
+
+    .btn-white {
+        background: #fff; border: 1px solid var(--dash-border);
+        color: var(--dash-sub); padding: 6px 12px; border-radius: 8px;
+        font-size: 11px; font-weight: 700; text-decoration: none;
+        display: inline-block;
+    }
+    .btn-white:hover { background: #f8fafc; color: var(--dash-text); }
+</style>
+
+<div class="page-container">
+    <div class="control-bar">
+        <div style="font-size: 15px; font-weight: 800; color: var(--dash-text);">
+            후기적합 대상 목록(케이스 기준) <span style="color: var(--dash-muted); font-weight: 600;">({{ rows|length }})</span>
+        </div>
+
+        <form method="get" style="display:flex; gap:8px; align-items:center; margin:0;">
+            <div class="search-group">
+                <span style="font-size: 14px; opacity: 0.5;">🔍</span>
+                <input type="text" name="q" class="search-input" value="{{ q }}" placeholder="고객명, 연락처 검색...">
+            </div>
+            <button class="btn-search" type="submit">검색</button>
+        </form>
+    </div>
+
+    <div class="list-card">
+        <table class="modern-table">
+            <thead>
+                <tr>
+                    <th style="width: 20%;">고객명</th>
+                    <th style="width: 20%;">연락처</th>
+                    <th style="width: 20%;">주민번호</th>
+                    <th style="width: 15%;">착용일</th>
+                    <th style="width: 15%;">공단 입금일</th>
+                    <th style="width: 10%; text-align: right;">관리</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr onclick="location.href='/customers/{{ row.customer.id }}/?tab=후기적합&case={{ row.case.id }}';" style="cursor: pointer;">
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-info">
+                                <div class="user-name">{{ row.customer.name }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td><span style="font-size:13px; font-weight:600; color:var(--dash-text);">{{ row.customer.phone }}</span></td>
+                    <td><span style="font-family:monospace; color:var(--dash-sub);">{{ row.customer.rrn_masked }}</span></td>
+                    <td><span style="font-size:13px; color:var(--dash-sub);">{{ row.case.purchase_date|default:"-" }}</span></td>
+                    <td><span style="font-size:13px; color:var(--dash-sub);">{{ row.case.nhis_deposit_date|default:"-" }}</span></td>
+                    <td style="text-align: right;">
+                        <a href="/customers/{{ row.customer.id }}/?tab=후기적합&case={{ row.case.id }}" class="btn-white">상세</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px; color: var(--dash-muted);">
+                        후기적합 대상이 없습니다.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
