@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}고객관리{% endblock %}
+{% block header_title %}Customers{% endblock %}
+
+{% block content %}
+
+<style>
+    .control-bar .btn-action{
+        padding: 5px 9px;
+        border-radius: 999px;
+        text-decoration:none;
+        font-size:13px;
+        font-weight:600;
+        cursor:pointer;
+    }
+
+    .btn-danger{
+        background:#FDE8E8;
+        color:#ff0000;
+        border:none;
+        cursor:pointer;
+    }
+
+    .btn-danger:hover{
+        background:#ffc1c1;
+        cursor:pointer;
+    }
+</style>
+
+
+
+<div class="page-container">
+    <!-- 상단 컨트롤 바 -->
+    <div class="control-bar">
+        <form method="get" id="searchForm" style="display: contents;">
+            <!-- 검색 영역 -->
+            <div class="search-group">
+                <span style="font-size: 14px; opacity: 0.5;">🔍</span>
+                <input type="text" name="q" class="search-input" placeholder="고객명, 연락처 검색..." value="{{ q }}">
+            </div>
+
+            <!-- 필터 영역 -->
+            <div class="filter-group">
+                <select class="select-input" name="filter_stage" onchange="this.form.submit()">
+                    <option value="">단계: 전체</option>
+                    <option value="검사" {% if filter_stage == "검사" %}selected{% endif %}>검사</option>
+                    <option value="제품/결제" {% if filter_stage == "제품/결제" %}selected{% endif %}>제품/결제</option>
+                    <option value="공단" {% if filter_stage == "공단" %}selected{% endif %}>공단</option>
+                    <option value="후기적합" {% if filter_stage == "후기적합" %}selected{% endif %}>후기적합</option>
+                </select>
+                <select class="select-input" name="filter_status" onchange="this.form.submit()">
+                    <option value="">상태: 전체</option>
+                    <option value="진행" {% if filter_status == "진행" %}selected{% endif %}>진행</option>
+                    <option value="보류" {% if filter_status == "보류" %}selected{% endif %}>보류</option>
+                    <option value="취소" {% if filter_status == "취소" %}selected{% endif %}>취소</option>
+                </select>
+                <select class="select-input" name="per_page" onchange="this.form.submit()" style="width: 80px;">
+                    <option value="30" {% if per_page == "30" %}selected{% endif %}>30개</option>
+                    <option value="50" {% if per_page == "50" %}selected{% endif %}>50개</option>
+                    <option value="100" {% if per_page == "100" %}selected{% endif %}>100개</option>
+                </select>
+            </div>
+        </form>
+
+        <!-- 액션 버튼 -->
+        <div class="filter-group">
+            <a href="{% url 'customers:create' %}" class="btn-action btn-primary">+ 고객 등록</a>
+            <button type="button" id="toggleDeleteMode" class="btn-action btn-danger">삭제</button>
+        </div>
+
+        <!-- 삭제 모드 툴바 (평소엔 숨김) -->
+        <form method="post" action="/customers/bulk-trash/" id="bulkTrashForm" style="display:none; gap:8px; align-items:center;">
+            {% csrf_token %}
+            <span style="font-size:13px; font-weight:700; color:var(--dash-text);">선택 삭제 모드</span>
+            <button type="button" id="selectAllBtn" class="btn-action btn-white">전체 선택</button>
+            <button type="submit" class="btn-action btn-danger" onclick="return confirm('선택한 고객을 휴지통으로 이동하시겠습니까?');">삭제하기</button>
+            <button type="button" id="cancelDeleteMode" class="btn-action btn-white">취소</button>
+        </form>
+    </div>
+
+    <!-- 리스트 테이블 카드 -->
+    <div class="list-card">
+        <table class="modern-table">
+            <thead>
+                <tr>
+                    <th class="select-col" style="display:none; width:40px;">
+                        <input type="checkbox" id="selectAllCheckbox">
+                    </th>
+                    <th style="width: 10%;">고객번호</th>
+                    <th style="width: 25%;">고객명</th>
+                    <th style="width: 20%;">현재 단계</th>
+                    <th style="width: 15%;">회차</th>
+                    <th style="width: 15%;">상태</th>
+                    <th style="width: 15%; text-align: right;">관리</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in customers %}
+                <tr onclick="if(!document.body.classList.contains('delete-mode')) location.href='/customers/{{ c.id }}/';" style="cursor: pointer;">
+                    <td class="select-col" style="display:none;" onclick="event.stopPropagation();">
+                        <input type="checkbox" name="ids" value="{{ c.id }}" form="bulkTrashForm">
+                    </td>
+                    <td>
+                        <div class="user-cell">
+                            <span style="font-family:monospace; font-weight:700; color:var(--dash-sub);">{{ c.id }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-info">
+                                <div class="user-name">{{ c.name }}</div>
+                                <div class="user-sub">{{ c.phone|default:"-" }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span style="font-size:13px; font-weight:600; color:var(--dash-text);">{{ c.stage|default:"-" }}</span>
+                    </td>
+                    <td>
+                        <span style="font-size:13px; color:var(--dash-sub);">{{ c.current_cycle|default:"-" }}회차</span>
+                    </td>
+                    <td>
+                        {% if c.status == '진행' %}
+                            <span class="status-badge blue">진행중</span>
+                        {% elif c.status == '시급' %}
+                            <span class="status-badge red">시급</span>
+                        {% else %}
+                            <span class="status-badge gray">{{ c.status|default:"대기" }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: right;">
+                        <a href="/customers/{{ c.id }}/" class="btn-action btn-white" style="padding: 6px 12px; font-size: 11px;">상세</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px; color: var(--dash-muted);">
+                        조건에 맞는 고객이 없습니다.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- 페이지네이션 -->
+        <div class="pagination">
+            <div class="page-info">
+                총 {{ page_obj.paginator.count }}명 중 {{ page_obj.start_index }}-{{ page_obj.end_index }}
+            </div>
+            <div class="page-nav">
+                {% if page_obj.has_previous %}
+                    <a href="?q={{ q }}&per_page={{ per_page }}&page={{ page_obj.previous_page_number }}" class="page-btn">‹</a>
+                {% endif %}
+
+                {% for p in page_obj.paginator.page_range %}
+                    {% if p >= page_obj.number|add:-2 and p <= page_obj.number|add:2 %}
+                        <a href="?q={{ q }}&per_page={{ per_page }}&page={{ p }}" class="page-btn {% if p == page_obj.number %}active{% endif %}">{{ p }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page_obj.has_next %}
+                    <a href="?q={{ q }}&per_page={{ per_page }}&page={{ page_obj.next_page_number }}" class="page-btn">›</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleBtn = document.getElementById('toggleDeleteMode');
+        const cancelBtn = document.getElementById('cancelDeleteMode');
+        const bulkForm = document.getElementById('bulkTrashForm');
+        const searchForm = document.getElementById('searchForm');
+        const selectCols = document.querySelectorAll('.select-col');
+        const actionBtns = document.querySelector('.control-bar .filter-group:nth-child(2)'); // 액션 버튼 그룹
+
+        const selectAllBtn = document.getElementById('selectAllBtn');
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        const checkboxes = document.querySelectorAll('input[type="checkbox"][name="ids"]');
+
+        function setDeleteMode(on) {
+            document.body.classList.toggle('delete-mode', on);
+            if (on) {
+                bulkForm.style.display = 'flex';
+                searchForm.style.display = 'none';
+                actionBtns.style.display = 'none';
+                selectCols.forEach(el => el.style.display = 'table-cell');
+            } else {
+                bulkForm.style.display = 'none';
+                searchForm.style.display = 'contents';
+                actionBtns.style.display = 'flex';
+                selectCols.forEach(el => el.style.display = 'none');
+                // 초기화
+                checkboxes.forEach(cb => cb.checked = false);
+                if (selectAllCheckbox) selectAllCheckbox.checked = false;
+            }
+        }
+
+        if(toggleBtn) toggleBtn.addEventListener('click', () => setDeleteMode(true));
+        if(cancelBtn) cancelBtn.addEventListener('click', () => setDeleteMode(false));
+
+        // 전체 선택 로직
+        function toggleAll(checked) {
+            checkboxes.forEach(cb => cb.checked = checked);
+            if (selectAllCheckbox) selectAllCheckbox.checked = checked;
+        }
+
+        if(selectAllBtn) selectAllBtn.addEventListener('click', () => {
+            const anyUnchecked = Array.from(checkboxes).some(cb => !cb.checked);
+            toggleAll(anyUnchecked);
+        });
+
+        if(selectAllCheckbox) selectAllCheckbox.addEventListener('change', (e) => toggleAll(e.target.checked));
+    });
+</script>
+{% endblock %}

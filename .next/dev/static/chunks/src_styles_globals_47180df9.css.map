@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 1, "column": 0}, "map": {"version":3,"sources":["file:///Users/mes/Desktop/mes-saas/src/styles/globals.css"],"sourcesContent":["@import \"tailwindcss\";\n\n@theme {\n  --color-background: #080808;\n  --color-foreground: #ededed;\n}\n\n:root {\n  background-color: var(--color-background);\n  color: var(--color-foreground);\n}\n\nbody {\n  margin: 0;\n  font-family: sans-serif;\n}\n"],"names":[],"mappings":"AAEA;;;;AAKA;;;;;AAKA"}}]
+}

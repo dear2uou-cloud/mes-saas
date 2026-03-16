@@ -1,0 +1,16 @@
+/* [project]/src/styles/globals.css [app-client] (css) */
+@theme {
+  --color-background: #080808; --color-foreground: #ededed;
+}
+
+:root {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+
+/*# sourceMappingURL=src_styles_globals_47180df9.css.map*/

@@ -1,0 +1,547 @@
+{% extends "base.html" %}
+{% load dict_extras %}
+
+{% block title %}재고관리{% endblock %}
+{% block header_title %}Inventory{% endblock %}
+
+{% block content %}
+<!-- 스타일 정의 -->
+<style>
+    :root {
+        --dash-border: rgba(226, 232, 240, 0.95);
+        --dash-bg: #f8fafc;
+        --dash-card: #ffffff;
+        --dash-text: #0f172a;
+        --dash-sub: #64748b;
+        --dash-muted: #94a3b8;
+        --dash-blue: #2f80ed;
+        --dash-blue-soft: rgba(47, 128, 237, 0.12);
+        --dash-green: #16a34a;
+        --dash-red: #ef4444;
+        --dash-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+        --dash-radius: 20px;
+    }
+
+    .page-container { display: flex; flex-direction: column; gap: 18px; }
+
+    /* 컨트롤 바 */
+    .control-bar {
+        display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+        background: #fff; padding: 12px 16px; border-radius: 16px; border: 1px solid var(--dash-border); box-shadow: var(--dash-shadow);
+    }
+    .inv-tabs { display: flex; gap: 4px; background: #f1f5f9; padding: 4px; border-radius: 12px; }
+    .inv-tab {
+        padding: 8px 16px; border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--dash-sub); text-decoration: none; transition: all 0.2s;
+    }
+    .inv-tab.active { background: #fff; color: var(--dash-blue); box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+    .inv-tab:hover:not(.active) { color: var(--dash-text); }
+
+    .search-group { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--dash-border); border-radius: 10px; padding: 4px 8px; width: 300px; }
+    .search-input { border: none; outline: none; background: transparent; padding: 6px; font-size: 14px; color: var(--dash-text); width: 100%; }
+
+    .btn-action { padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+    .btn-primary { background: var(--dash-blue); color: #fff; }
+    .btn-white { background: #fff; border: 1px solid var(--dash-border); color: var(--dash-sub); }
+
+    /* 테이블 & 카드 */
+    .inv-card { background: #fff; border: 1px solid var(--dash-border); border-radius: var(--dash-radius); box-shadow: var(--dash-shadow); overflow: hidden; }
+    .inv-header { padding: 16px 20px; border-bottom: 1px solid var(--dash-border); display: flex; justify-content: space-between; align-items: center; background: #fff; }
+    .inv-title { font-size: 16px; font-weight: 800; color: var(--dash-text); }
+
+    .modern-table { width: 100%; border-collapse: collapse; text-align: left; }
+    .modern-table th { background: #f8fafc; padding: 14px 20px; font-size: 12px; font-weight: 800; color: var(--dash-sub); border-bottom: 1px solid var(--dash-border); }
+    .modern-table td { padding: 14px 20px; border-bottom: 1px solid #f1f5f9; font-size: 13px; color: var(--dash-text); vertical-align: middle; }
+    .modern-table tr:hover td { background: #fdfdfd; }
+
+    /* 모달 */
+    .inv-modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); display: none; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(2px); }
+    .inv-modal { width: 100%; max-width: 600px; background: #fff; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); overflow: hidden; animation: modalPop 0.2s ease-out; }
+    .inv-modal-header { padding: 18px 24px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
+    .inv-modal-title { font-size: 16px; font-weight: 800; color: var(--dash-text); }
+    .inv-modal-close { background: none; border: none; font-size: 20px; color: var(--dash-sub); cursor: pointer; }
+    .inv-modal-body { padding: 24px; }
+    
+    .input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #cbd5e1; outline: none; font-size: 14px; }
+    .input:focus { border-color: var(--dash-blue); box-shadow: 0 0 0 3px var(--dash-blue-soft); }
+    .alert { padding: 12px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+    .alert.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    .alert.danger { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+</style>
+
+<div class="page-container">
+    {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+    <!-- 상단 컨트롤 바 -->
+    <div class="control-bar">
+        <div class="inv-tabs">
+            <a href="?tab=입고{% if q %}&q={{ q|urlencode }}{% endif %}" class="inv-tab {% if tab == '입고' %}active{% endif %}">입고</a>
+            <a href="?tab=조정{% if q %}&q={{ q|urlencode }}{% endif %}" class="inv-tab {% if tab == '조정' %}active{% endif %}">조정</a>
+            <a href="?tab=출고{% if q %}&q={{ q|urlencode }}{% endif %}" class="inv-tab {% if tab == '출고' %}active{% endif %}">출고</a>
+        </div>
+
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <form method="get" style="display: flex; gap: 8px; align-items: center; margin: 0;">
+                <input type="hidden" name="tab" value="{{ tab }}">
+                <div class="search-group">
+                    <span>🔍</span>
+                    <input type="text" name="q" class="search-input" value="{{ q }}" placeholder="상품명, 제조사, 시리얼...">
+                </div>
+                <button type="submit" class="btn-action btn-primary">검색</button>
+            </form>
+
+            {% if tab == '입고' %}
+                <button class="btn-action btn-primary" onclick="invOpen('invModalReceive')">+ 입고 등록</button>
+            {% elif tab == '조정' %}
+                <button class="btn-action btn-white" onclick="invOpen('invModalAdjust')">± 재고 조정</button>
+            {% elif tab == '출고' %}
+                <button class="btn-action btn-white" style="color: var(--dash-red); border-color: #fecaca;" onclick="invOpen('invModalShip')">- 출고 처리</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 탭별 메인 컨텐츠 (입고) -->
+    {% if tab == '입고' %}
+    <div class="inv-card">
+        <div class="inv-header">
+            <div class="inv-title">현재 재고 목록</div>
+            <form id="invBulkReceiveForm" method="post" style="display:flex; gap:8px; align-items:center;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="receive_bulk_qty" />
+                <input class="input" type="number" name="qty" placeholder="수량" style="width:80px; padding:6px 10px;" min="1" required />
+                <button class="btn-action btn-white" type="submit">선택 일괄 입고</button>
+            </form>
+        </div>
+        <div style="overflow-x: auto;">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>유형</th>
+                        <th>제조사</th>
+                        <th>모델명</th>
+                        <th>제조번호</th>
+                        <th>표준코드</th>
+                        <th>제조일</th>
+                        <th style="text-align: right;">현재고</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in receive_rows %}
+                    <tr>
+                        <td></td>
+                        <td><span style="font-weight:700; color:var(--dash-blue);">{{ u.product_model.get_product_kind_display }}</span></td>
+                        <td>{{ u.product_model.manufacturer.name }}</td>
+                        <td><b>{{ u.product_model.model_name }}</b></td>
+                        <td>{{ u.serial_no }}</td>
+                        <td>{{ u.standard_code }}</td>
+                        <td>{{ u.mfg_date|default:"-" }}</td>
+                        <td style="text-align: right; font-weight:700;">{{ qty_map|get_item:u.product_model_id|default:0 }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% for pm in receive_qty_models %}
+                    <tr>
+                        <td><input type="checkbox" class="invChkReceiveQty" value="{{ pm.id }}"></td>
+                        <td>{{ pm.get_product_kind_display }}</td>
+                        <td>{{ pm.manufacturer.name }}</td>
+                        <td><b>{{ pm.model_name }}</b></td>
+                        <td>-</td>
+                        <td>-</td>
+                        <td>-</td>
+                        <td style="text-align: right; font-weight:700;">{{ pm.qty_current }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 탭별 메인 컨텐츠 (조정) -->
+    {% if tab == '조정' %}
+    <div class="inv-card">
+        <div class="inv-header">
+            <div class="inv-title">재고 조정 대상</div>
+            <form id="invBulkAdjustForm" method="post" style="display:flex; gap:8px; align-items:center;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="adjust_bulk_qty" />
+                <input class="input" type="number" name="qty_delta" placeholder="+/-" style="width:70px; padding:6px;" required />
+                <select class="input" name="reason" style="width:140px; padding:6px;" required>
+                    <option value="">사유 선택</option>
+                    <option value="재고정리">재고정리</option>
+                    <option value="분실">분실</option>
+                    <option value="파손">파손</option>
+                </select>
+                <button class="btn-action btn-white" type="submit">일괄 조정</button>
+            </form>
+        </div>
+        <div style="overflow-x: auto;">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px; text-align:center;"><input type="checkbox" id="invChkAllQty"></th>
+                        <th>유형</th>
+                        <th>제조사</th>
+                        <th>모델명</th>
+                        <th>제조번호</th>
+                        <th style="text-align: right;">현재고</th>
+                        <th style="text-align: center;">관리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in adjust_current_rows %}
+                    <tr>
+                        <td></td>
+                        <td>{{ u.product_model.get_product_kind_display }}</td>
+                        <td>{{ u.product_model.manufacturer.name }}</td>
+                        <td><b>{{ u.product_model.model_name }}</b></td>
+                        <td>{{ u.serial_no }}</td>
+                        <td style="text-align: right;">1</td>
+                        <td style="text-align: center;">
+                            <button type="button" class="btn-action btn-white" style="padding:4px 8px; font-size:11px;" 
+                                data-item-type="SERIAL"
+                                data-unit-id="{{ u.id }}"
+                                data-pm-id=""
+                                data-kind-kor="보청기"
+                                data-mfr="{{ u.product_model.manufacturer.name }}"
+                                data-model="{{ u.product_model.model_name }}"
+                                data-serial="{{ u.serial_no }}"
+                                data-std="{{ u.standard_code }}"
+                                data-mfg="{% if u.mfg_date %}{{ u.mfg_date }}{% endif %}"
+                                data-qty="1"
+                                onclick="invOpenAdjustSingle(this)">개별조정</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% for pm in adjust_current_qty_models %}
+                    <tr>
+                        <td style="text-align:center;"><input type="checkbox" class="invChkQty" name="product_model_ids" form="invBulkAdjustForm" value="{{ pm.id }}" /></td>
+                        <td>{{ pm.get_product_kind_display }}</td>
+                        <td>{{ pm.manufacturer.name }}</td>
+                        <td><b>{{ pm.model_name }}</b></td>
+                        <td>-</td>
+                        <td style="text-align: right;">{{ pm.qty_current }}</td>
+                        <td style="text-align: center;">
+                            <button type="button" class="btn-action btn-white" style="padding:4px 8px; font-size:11px;" 
+                                data-item-type="QTY"
+                                data-unit-id=""
+                                data-pm-id="{{ pm.id }}"
+                                data-kind-kor="{% if pm.product_kind == 'DOME' %}돔{% elif pm.product_kind == 'RECEIVER' %}리시버{% else %}보청기{% endif %}"
+                                data-mfr="{{ pm.manufacturer.name }}"
+                                data-model="{{ pm.model_name }}"
+                                data-serial=""
+                                data-std=""
+                                data-mfg=""
+                                data-qty="{{ pm.qty_current }}"
+                                onclick="invOpenAdjustSingle(this)">개별조정</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 탭별 메인 컨텐츠 (출고) -->
+    {% if tab == '출고' %}
+    <div class="inv-card">
+        <div class="inv-header">
+            <div class="inv-title">출고 가능 재고</div>
+            <form id="invBulkShipForm" method="post" style="display:flex; gap:8px; align-items:center;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="ship_bulk_qty" />
+                <input class="input" type="number" name="qty" placeholder="수량" style="width:70px; padding:6px;" min="1" required />
+                <input class="input" type="text" name="reason" placeholder="출고 사유" style="width:140px; padding:6px;" required />
+                <button class="btn-action btn-white" type="submit" style="color:var(--dash-red); border-color:#fecaca;">일괄 출고</button>
+            </form>
+        </div>
+        <div style="overflow-x: auto;">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px; text-align:center;"><input type="checkbox" id="invChkAllShipQty"></th>
+                        <th>유형</th>
+                        <th>제조사</th>
+                        <th>모델명</th>
+                        <th>제조번호</th>
+                        <th style="text-align: right;">현재고</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in ship_current_rows %}
+                    <tr>
+                        <td></td>
+                        <td>{{ u.product_model.get_product_kind_display }}</td>
+                        <td>{{ u.product_model.manufacturer.name }}</td>
+                        <td><b>{{ u.product_model.model_name }}</b></td>
+                        <td>{{ u.serial_no }}</td>
+                        <td style="text-align: right;">1</td>
+                    </tr>
+                    {% endfor %}
+                    {% for pm in ship_current_qty_models %}
+                    <tr>
+                        <td style="text-align:center;"><input type="checkbox" class="invChkShipQty" value="{{ pm.id }}"></td>
+                        <td>{{ pm.get_product_kind_display }}</td>
+                        <td>{{ pm.manufacturer.name }}</td>
+                        <td><b>{{ pm.model_name }}</b></td>
+                        <td>-</td>
+                        <td style="text-align: right;">{{ pm.qty_current }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 스크립트 복원 및 수정 -->
+<script>
+    function invOpen(id){ document.getElementById(id).style.display='flex'; }
+    function invClose(id){ document.getElementById(id).style.display='none'; }
+
+    // 개별 조정 모달 열기
+    function invOpenAdjustSingle(btn){
+        var m = document.getElementById('invModalAdjustSingle');
+        if(!m) return;
+        var d = btn.dataset || {};
+
+        document.getElementById('inv_adj_item_type').value = (d.itemType || 'QTY');
+        document.getElementById('inv_adj_unit_id').value = (d.unitId || '');
+        document.getElementById('inv_adj_pm_id').value = (d.pmId || '');
+
+        // readonly display
+        document.getElementById('inv_adj_disp_kind').innerText = d.kindKor || '-';
+        document.getElementById('inv_adj_disp_mfr').innerText = d.mfr || '-';
+        document.getElementById('inv_adj_disp_model').innerText = d.model || '-';
+        document.getElementById('inv_adj_disp_serial').innerText = d.serial || '-';
+        document.getElementById('inv_adj_disp_qty').innerText = d.qty || '0';
+
+        // editable init
+        document.getElementById('inv_adj_qty_delta').value = '';
+        document.getElementById('inv_adj_reason').value = '';
+
+        // toggle fields
+        var isSerial = (d.itemType || '').toUpperCase() === 'SERIAL';
+        var qtyWrap = document.getElementById('inv_adj_qty_wrap');
+        if(qtyWrap) qtyWrap.style.display = isSerial ? 'none' : 'block';
+
+        invOpen('invModalAdjustSingle');
+    }
+
+    // 조정 전체선택 로직
+    (function(){
+        var bulkForm = document.getElementById('invBulkAdjustForm');
+        var chkAll = document.getElementById('invChkAllQty');
+        
+        if(chkAll){
+            chkAll.addEventListener('change', function(){
+                var on = !!chkAll.checked;
+                document.querySelectorAll('.invChkQty').forEach(function(c){ c.checked = on; });
+            });
+        }
+        
+        // 개별 체크 시 전체 선택 해제 로직
+        document.addEventListener('change', function(e){
+            if(e.target.classList.contains('invChkQty')){
+                if(!e.target.checked && chkAll) chkAll.checked = false;
+            }
+        });
+
+        if(bulkForm){
+            bulkForm.addEventListener('submit', function(e){
+                // 선택된 항목들을 hidden input으로 추가
+                bulkForm.querySelectorAll('input[name="product_model_ids"]').forEach(function(n){ n.remove(); });
+                var selected = 0;
+                document.querySelectorAll('.invChkQty').forEach(function(c){
+                    if(c.checked){
+                        selected++;
+                        var h=document.createElement('input');
+                        h.type='hidden';
+                        h.name='product_model_ids';
+                        h.value=c.value;
+                        bulkForm.appendChild(h);
+                    }
+                });
+                if(selected === 0){
+                    e.preventDefault();
+                    alert('일괄 조정할 항목을 선택해주세요.');
+                }
+            });
+        }
+    })();
+
+    // 출고 전체선택 로직
+    (function(){
+        var bulkForm = document.getElementById('invBulkShipForm');
+        var chkAll = document.getElementById('invChkAllShipQty');
+        
+        if(chkAll){
+            chkAll.addEventListener('change', function(){
+                var on = !!chkAll.checked;
+                document.querySelectorAll('.invChkShipQty').forEach(function(c){ c.checked = on; });
+            });
+        }
+
+        if(bulkForm){
+            bulkForm.addEventListener('submit', function(e){
+                bulkForm.querySelectorAll('input[name="product_model_ids"]').forEach(function(n){ n.remove(); });
+                var selected = 0;
+                document.querySelectorAll('.invChkShipQty').forEach(function(c){
+                    if(c.checked){
+                        selected++;
+                        var h=document.createElement('input');
+                        h.type='hidden';
+                        h.name='product_model_ids';
+                        h.value=c.value;
+                        bulkForm.appendChild(h);
+                    }
+                });
+                if(selected === 0){
+                    e.preventDefault();
+                    alert('일괄 출고할 항목을 선택해주세요.');
+                }
+            });
+        }
+    })();
+
+    // 입고 전체선택 로직 (입고 폼 처리용)
+    (function(){
+        var bulkForm = document.getElementById('invBulkReceiveForm');
+        if(bulkForm){
+            bulkForm.addEventListener('submit', function(e){
+                bulkForm.querySelectorAll('input[name="product_model_ids"]').forEach(function(n){ n.remove(); });
+                var selected = 0;
+                document.querySelectorAll('.invChkReceiveQty').forEach(function(c){
+                    if(c.checked){
+                        selected++;
+                        var h=document.createElement('input');
+                        h.type='hidden';
+                        h.name='product_model_ids';
+                        h.value=c.value;
+                        bulkForm.appendChild(h);
+                    }
+                });
+                if(selected === 0){
+                    e.preventDefault();
+                    alert('일괄 입고할 항목을 선택해주세요.');
+                }
+            });
+        }
+    })();
+</script>
+
+<!-- 모달들 -->
+<!-- 1. 입고 모달 -->
+<div id="invModalReceive" class="inv-modal-backdrop" onclick="if(event.target===this) invClose('invModalReceive')">
+    <div class="inv-modal">
+        <div class="inv-modal-header">
+            <div class="inv-modal-title">입고 등록 (CSV)</div>
+            <button class="inv-modal-close" onclick="invClose('invModalReceive')">×</button>
+        </div>
+        <div class="inv-modal-body">
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="receive_csv" />
+                <div style="margin-bottom: 12px;">
+                    <label style="display:block; font-size:13px; font-weight:700; margin-bottom:6px;">CSV 파일 선택</label>
+                    <input class="input" type="file" name="csv_file" accept=".csv">
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <a href="?tab=입고&download=receive_template" class="btn-action btn-white">양식 다운로드</a>
+                    <button type="submit" class="btn-action btn-primary">업로드</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 2. 조정 모달 (CSV) -->
+<div id="invModalAdjust" class="inv-modal-backdrop" onclick="if(event.target===this) invClose('invModalAdjust')">
+    <div class="inv-modal">
+        <div class="inv-modal-header">
+            <div class="inv-modal-title">재고 조정 (CSV)</div>
+            <button class="inv-modal-close" onclick="invClose('invModalAdjust')">×</button>
+        </div>
+        <div class="inv-modal-body">
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="adjust_csv" />
+                <div style="margin-bottom: 12px;">
+                    <input class="input" type="file" name="csv_file" accept=".csv">
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <a href="?tab=조정&download=adjust_template" class="btn-action btn-white">양식 다운로드</a>
+                    <button type="submit" class="btn-action btn-primary">업로드</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 3. 출고 모달 (CSV) -->
+<div id="invModalShip" class="inv-modal-backdrop" onclick="if(event.target===this) invClose('invModalShip')">
+    <div class="inv-modal">
+        <div class="inv-modal-header">
+            <div class="inv-modal-title">출고 처리 (CSV)</div>
+            <button class="inv-modal-close" onclick="invClose('invModalShip')">×</button>
+        </div>
+        <div class="inv-modal-body">
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="ship_csv" />
+                <div style="margin-bottom: 12px;">
+                    <input class="input" type="file" name="csv_file" accept=".csv">
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <a href="?tab=출고&download=ship_template" class="btn-action btn-white">양식 다운로드</a>
+                    <button type="submit" class="btn-action btn-primary">업로드</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 4. 개별 조정 모달 (화면 직접 조정) -->
+<div id="invModalAdjustSingle" class="inv-modal-backdrop" onclick="if(event.target===this) invClose('invModalAdjustSingle')">
+    <div class="inv-modal">
+        <div class="inv-modal-header">
+            <div class="inv-modal-title">개별 재고 조정</div>
+            <button class="inv-modal-close" onclick="invClose('invModalAdjustSingle')">×</button>
+        </div>
+        <div class="inv-modal-body">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom: 14px; font-size:13px;">
+                <div><span style="color:var(--dash-sub);">유형:</span> <span id="inv_adj_disp_kind" style="font-weight:700;"></span></div>
+                <div><span style="color:var(--dash-sub);">현재고:</span> <span id="inv_adj_disp_qty" style="font-weight:700;"></span></div>
+                <div><span style="color:var(--dash-sub);">제조사:</span> <span id="inv_adj_disp_mfr"></span></div>
+                <div><span style="color:var(--dash-sub);">모델명:</span> <span id="inv_adj_disp_model"></span></div>
+                <div><span style="color:var(--dash-sub);">시리얼:</span> <span id="inv_adj_disp_serial"></span></div>
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="adjust_single" />
+                <input type="hidden" name="item_type" id="inv_adj_item_type" />
+                <input type="hidden" name="unit_id" id="inv_adj_unit_id" />
+                <input type="hidden" name="product_model_id" id="inv_adj_pm_id" />
+
+                <div id="inv_adj_qty_wrap" style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; font-weight:700; color:var(--dash-sub); margin-bottom:4px;">조정 수량 (+/-)</label>
+                    <input class="input" type="number" name="qty_delta" id="inv_adj_qty_delta" placeholder="예: -1" />
+                </div>
+
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; font-weight:700; color:var(--dash-sub); margin-bottom:4px;">조정 사유</label>
+                    <input class="input" type="text" name="reason" id="inv_adj_reason" placeholder="필수 입력" required />
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <button type="button" class="btn-action btn-white" onclick="invClose('invModalAdjustSingle')">취소</button>
+                    <button type="submit" class="btn-action btn-primary">반영하기</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}홈(대시보드)
+
+<script>
+(function(){
+  const wrap = document.getElementById('salesChartWrap');
+  const svg = document.getElementById('salesChartSvg');
+  if(!wrap || !svg) return;
+
+  // Original coordinate system (server-rendered)
+  const ORIG_LEFT = 10;
+  const ORIG_RIGHT = 710;
+  const ORIG_PLOT_W = ORIG_RIGHT - ORIG_LEFT;
+  const SVG_H = 240;
+
+  // Cache original attributes once
+  function cacheOrig(){
+    if(svg.dataset._origCached === '1') return;
+    svg.dataset._origCached = '1';
+
+    svg.querySelectorAll('[x1],[x2],[x]').forEach(el=>{
+      if(el.hasAttribute('x1')) el.dataset.ox1 = el.getAttribute('x1');
+      if(el.hasAttribute('x2')) el.dataset.ox2 = el.getAttribute('x2');
+      if(el.hasAttribute('x'))  el.dataset.ox  = el.getAttribute('x');
+    });
+    svg.querySelectorAll('[cx]').forEach(el=>{
+      el.dataset.ocx = el.getAttribute('cx');
+    });
+    svg.querySelectorAll('rect').forEach(el=>{
+      if(el.hasAttribute('x')) el.dataset.orx = el.getAttribute('x');
+      if(el.hasAttribute('width')) el.dataset.orw = el.getAttribute('width');
+    });
+    svg.querySelectorAll('path[d]').forEach(el=>{
+      el.dataset.od = el.getAttribute('d');
+    });
+  }
+
+  function mapX(x, scale, newLeft){
+    return newLeft + (x - ORIG_LEFT) * scale;
+  }
+
+  function transformPathD(d, scale, newLeft){
+    // Paths are generated as: M x y L x y ... (absolute). Numbers alternate x,y.
+    const tokens = d.trim().split(/\s+/);
+    let numIdx = 0;
+    for(let i=0;i<tokens.length;i++){
+      const t = tokens[i];
+      // command token
+      if(/[a-zA-Z]/.test(t)) continue;
+      const v = parseFloat(t);
+      if(Number.isNaN(v)) continue;
+
+      if(numIdx % 2 === 0){
+        // x
+        const nx = mapX(v, scale, newLeft);
+        tokens[i] = (Math.round(nx * 100) / 100).toString();
+      }else{
+        // y unchanged
+        tokens[i] = (Math.round(v * 100) / 100).toString();
+      }
+      numIdx += 1;
+    }
+    return tokens.join(' ');
+  }
+
+  function relayout(){
+    cacheOrig();
+
+    // Use wrap inner width
+    const w = Math.max(320, Math.floor(wrap.clientWidth || 0));
+    const newLeft = ORIG_LEFT;
+    const newRight = Math.max(newLeft + 1, w - ORIG_LEFT);
+    const newPlotW = newRight - newLeft;
+    const scale = newPlotW / ORIG_PLOT_W;
+
+    // Make SVG user units match pixels (no scaling of element sizes)
+    svg.setAttribute('width', w.toString());
+    svg.setAttribute('height', SVG_H.toString());
+    svg.setAttribute('viewBox', `0 0 ${w} ${SVG_H}`);
+
+    // Lines and any elements with x/x1/x2
+    svg.querySelectorAll('[x1],[x2]').forEach(el=>{
+      if(el.dataset.ox1 != null){
+        const x1 = parseFloat(el.dataset.ox1);
+        if(!Number.isNaN(x1)) el.setAttribute('x1', (Math.round(mapX(x1, scale, newLeft)*100)/100).toString());
+      }
+      if(el.dataset.ox2 != null){
+        const x2 = parseFloat(el.dataset.ox2);
+        if(!Number.isNaN(x2)) el.setAttribute('x2', (Math.round(mapX(x2, scale, newLeft)*100)/100).toString());
+      }
+    });
+
+    // Text tick labels (x)
+    svg.querySelectorAll('text[x]').forEach(el=>{
+      const ox = parseFloat(el.dataset.ox);
+      if(Number.isNaN(ox)) return;
+      el.setAttribute('x', (Math.round(mapX(ox, scale, newLeft)*100)/100).toString());
+    });
+
+    // Circles (cx)
+    svg.querySelectorAll('circle[cx]').forEach(el=>{
+      const ocx = parseFloat(el.dataset.ocx);
+      if(Number.isNaN(ocx)) return;
+      el.setAttribute('cx', (Math.round(mapX(ocx, scale, newLeft)*100)/100).toString());
+    });
+
+    // Bars (rect x + width)
+    svg.querySelectorAll('rect[x][width]').forEach(el=>{
+      const ox = parseFloat(el.dataset.orx);
+      const ow = parseFloat(el.dataset.orw);
+      if(Number.isNaN(ox) || Number.isNaN(ow)) return;
+
+      const l = ox;
+      const r = ox + ow;
+      const nl = mapX(l, scale, newLeft);
+      const nr = mapX(r, scale, newLeft);
+      el.setAttribute('x', (Math.round(nl*100)/100).toString());
+      el.setAttribute('width', (Math.max(0, Math.round((nr-nl)*100)/100)).toString());
+    });
+
+    // Paths
+    svg.querySelectorAll('path[d]').forEach(el=>{
+      const od = el.dataset.od || el.getAttribute('d') || '';
+      if(!od) return;
+      el.setAttribute('d', transformPathD(od, scale, newLeft));
+    });
+  }
+
+  // Initial + responsive
+  relayout();
+  let t = null;
+  window.addEventListener('resize', function(){
+    window.clearTimeout(t);
+    t = window.setTimeout(relayout, 120);
+  });
+})();
+</script>
+
+<script>
+(function(){
+  const wrap = document.getElementById('salesChartWrap');
+  const tip = document.getElementById('salesChartTip');
+  if(!wrap || !tip) return;
+
+  function showTip(el, evt){
+    const text = el.getAttribute('data-tip') || '';
+    if(!text) return;
+    tip.textContent = text;
+    tip.classList.add('show');
+    moveTip(evt);
+  }
+  function hideTip(){
+    tip.classList.remove('show');
+  }
+  function moveTip(evt){
+    const rect = wrap.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  wrap.addEventListener('mousemove', function(evt){
+    if(!tip.classList.contains('show')) return;
+    moveTip(evt);
+  });
+
+  wrap.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('mouseenter', function(evt){ showTip(el, evt); });
+    el.addEventListener('mouseleave', hideTip);
+  });
+})();
+</script>
+
+{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">홈(대시보드)</div>
+
+<script>
+(function(){
+  const wrap = document.getElementById('salesChartWrap');
+  const tip = document.getElementById('salesChartTip');
+  if(!wrap || !tip) return;
+
+  function showTip(el, evt){
+    const text = el.getAttribute('data-tip') || '';
+    if(!text) return;
+    tip.textContent = text;
+    tip.classList.add('show');
+    moveTip(evt);
+  }
+  function hideTip(){
+    tip.classList.remove('show');
+  }
+  function moveTip(evt){
+    const rect = wrap.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  wrap.addEventListener('mousemove', function(evt){
+    if(!tip.classList.contains('show')) return;
+    moveTip(evt);
+  });
+
+  wrap.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('mouseenter', function(evt){ showTip(el, evt); });
+    el.addEventListener('mouseleave', hideTip);
+  });
+})();
+</script>
+
+{% endblock %}
+
+{% block header_title %}
+<div class="page-title">홈(대시보드)</div>
+
+<script>
+(function(){
+  const wrap = document.getElementById('salesChartWrap');
+  const tip = document.getElementById('salesChartTip');
+  if(!wrap || !tip) return;
+
+  function showTip(el, evt){
+    const text = el.getAttribute('data-tip') || '';
+    if(!text) return;
+    tip.textContent = text;
+    tip.classList.add('show');
+    moveTip(evt);
+  }
+  function hideTip(){
+    tip.classList.remove('show');
+  }
+  function moveTip(evt){
+    const rect = wrap.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  wrap.addEventListener('mousemove', function(evt){
+    if(!tip.classList.contains('show')) return;
+    moveTip(evt);
+  });
+
+  wrap.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('mouseenter', function(evt){ showTip(el, evt); });
+    el.addEventListener('mouseleave', hideTip);
+  });
+})();
+</script>
+
+{% endblock %}
+
+{% block content %}
+<style>
+  .dash-grid{ display:grid; gap:14px; }
+  .dash-row-2{ display:grid; grid-template-columns: 1fr 2fr; gap:14px; }
+  .dash-right-stack{ display:flex; flex-direction:column; gap:14px; }
+
+  .sales-card{ padding: 0; }
+  .sales-inner{
+    margin: 16px 18px 18px 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    overflow:hidden;
+  }
+  .sales-inner-head{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:12px;
+    padding: 16px 18px 10px 18px;
+  }
+  .sales-inner-title{ font-weight:800; }
+  .sales-amount{ font-size:28px; font-weight:900; letter-spacing:-.4px; margin-top:6px; }
+  .seg{
+    display:inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow:hidden;
+    background:#fff;
+  }
+  .seg a{
+    border:0;
+    background:transparent;
+    padding:8px 14px;
+    font-weight:800;
+    color: var(--muted);
+    cursor:pointer; text-decoration:none; display:block;
+  }
+  .seg a.active{
+    background: rgba(46,107,255,.12);
+    color: var(--blue);
+  }
+  /* ✅ 차트는 카드 내부에서 좌/우 여백 없이 꽉 차게 */
+  .chart-box{ padding: 0 0 16px 0; }
+  /* 기존 DOM 축은 정렬 문제가 있어 SVG tick으로 대체 */
+  .chart-axis{ display:none; }
+
+  .todo-link{ text-decoration:none; color:inherit; display:block; }
+  .todo-row{ display:flex; justify-content:space-between; align-items:center; padding: 10px 0; border-bottom:1px solid var(--line); }
+  .todo-row:last-child{ border-bottom:0; }
+  .todo-left{ display:flex; align-items:center; gap:10px; }
+  .dot{ width:8px; height:8px; border-radius:999px; background: rgba(16,24,40,.35); }
+  .todo-name{ font-weight:800; }
+  .todo-count{ font-weight:900; }
+
+  .followup-head{ display:flex; justify-content:space-between; align-items:center; }
+  .followup-head a{ text-decoration:none; color: var(--muted); font-weight:800; }
+  .followup-cards{ display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:12px; }
+  .fu-card{
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    background:#fff;
+  }
+  .fu-card.blue{ background: rgba(46,107,255,.08); border-color: rgba(46,107,255,.18); }
+  .fu-card.yellow{ background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.22); }
+  .fu-card.red{ background: rgba(217,45,32,.10); border-color: rgba(217,45,32,.22); }
+  .fu-card.purple{ background: rgba(124,58,237,.10); border-color: rgba(124,58,237,.22); }
+  .fu-top{ display:flex; align-items:center; gap:10px; font-weight:900; }
+  .fu-ico{
+    width:28px; height:28px; border-radius:999px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-weight:900;
+    background:#fff;
+    border:1px solid var(--line);
+  }
+  .fu-count{ font-size:30px; font-weight:900; margin-top:6px; }
+  .fu-sub{ color: rgba(16,24,40,.55); font-weight:800; margin-top:2px; }
+  .fu-sub.red{ color: var(--red); }
+
+  .stagn-row{ display:flex; justify-content:space-between; align-items:center; padding: 12px 0; border-bottom:1px solid var(--line); }
+  .stagn-row:last-child{ border-bottom:0; }
+  .stagn-left{ display:flex; align-items:center; gap:10px; }
+  .stagn-left .label{ font-weight:900; }
+  .stagn-left .days{ color: var(--red); font-weight:900; }
+  .stagn-right{ font-weight:900; }
+
+
+  .chart-wrap{ position:relative; }
+  .chart-tooltip{
+    position:absolute;
+    z-index:20;
+    padding:8px 10px;
+    border-radius:10px;
+    border:1px solid var(--line);
+    background:#fff;
+    box-shadow: 0 10px 30px rgba(16,24,40,.12);
+    font-weight:900;
+    font-size:12px;
+    color: rgba(16,24,40,.9);
+    pointer-events:none;
+    white-space:nowrap;
+    transform: translate(-50%, -120%);
+    opacity:0;
+    transition: opacity .08s ease;
+  }
+  .chart-tooltip.show{ opacity:1; }
+
+  .table{ width:100%; table-layout:fixed; }
+  .table .w-small{ width:120px; }
+  .table th, .table td{ padding: 10px 12px; vertical-align:top; }
+
+  @media (max-width: 1100px){
+    .dash-row-2{ grid-template-columns: 1fr; }
+    .followup-cards{ grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="dash-grid">
+  <!-- 매출 현황 -->
+  <div class="card sales-card">
+    <div class="card-head">
+      <div class="card-title">매출 현황</div>
+    </div>
+
+    <div class="sales-inner">
+      <div class="sales-inner-head">
+        <div>
+          <div class="sales-inner-title">매출 현황</div>
+          <div class="sales-range" style="margin-top:4px; color:rgba(16,24,40,.6); font-size:12px;">{{ period_label }}</div>
+          {% if metric == "sales" %}<div class="sales-amount">₩{{ sales_total|money }}</div>{% else %}<div class="sales-amount">{{ sales_total|money }}</div>{% endif %}
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div class="seg" aria-label="기간">
+            <a href="?period=day&metric={{ metric }}" class="{% if period == 'day' %}active{% endif %}">일</a>
+            <a href="?period=week&metric={{ metric }}" class="{% if period == 'week' %}active{% endif %}">주</a>
+            <a href="?period=month&metric={{ metric }}" class="{% if period == 'month' %}active{% endif %}">월</a>
+          </div>
+          <div class="seg" aria-label="지표">
+            <a href="?period={{ period }}&metric=sales" class="{% if metric == 'sales' %}active{% endif %}">매출</a>
+            <a href="?period={{ period }}&metric=count" class="{% if metric == 'count' %}active{% endif %}">수량</a>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; padding: 0 18px 10px 18px;">
+        <div class="seg" aria-label="기간 이동">
+          <a href="{{ nav_prev_url }}" title="이전">‹</a>
+          <a href="{{ nav_today_url }}" title="오늘">오늘</a>
+          <a href="{{ nav_next_url }}" title="다음">›</a>
+        </div>
+      </div>
+
+      <div class="chart-box">
+        <div class="chart-wrap" id="salesChartWrap">
+          <div class="chart-tooltip" id="salesChartTip"></div>
+          <svg id="salesChartSvg" viewBox="0 0 720 240" width="100%" height="240" role="img" aria-label="매출 차트">
+            <!-- ✅ plot area x:[10..710]로 고정(그래프/라벨 동일 좌표계) -->
+            <line x1="10" y1="40" x2="710" y2="40" stroke="rgba(16,24,40,.08)" />
+            <line x1="10" y1="110" x2="710" y2="110" stroke="rgba(16,24,40,.08)" />
+            <line x1="10" y1="180" x2="710" y2="180" stroke="rgba(16,24,40,.08)" />
+
+            {% if period == 'day' %}
+              {% for b in chart_bars %}
+                <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="10"
+                      fill="rgba(46,107,255,.45)"
+                      data-tip="{{ b.tip|escape }}"
+                      style="cursor:default;" />
+              {% endfor %}
+            {% else %}
+              <path d="{{ chart_area_path }}" fill="rgba(46,107,255,.12)" />
+              <path d="{{ chart_line_path }}" fill="none" stroke="rgba(46,107,255,.95)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              {% for p in chart_points %}
+                <circle cx="{{ p.x }}" cy="{{ p.y }}" r="7" fill="#fff" stroke="rgba(46,107,255,.95)" stroke-width="3"
+                        data-tip="{{ p.tip|escape }}"
+                        style="cursor:default;" />
+              {% endfor %}
+            {% endif %}
+
+            <!-- X축 tick: 그래프와 동일 좌표(x) 사용 -->
+            {% for t in chart_ticks %}
+              <text x="{{ t.x }}" y="228" text-anchor="middle" font-size="12" font-weight="800" fill="rgba(16,24,40,.55)">{{ t.label }}</text>
+            {% endfor %}
+          </svg>
+        </div>
+
+        <div class="chart-axis"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dash-row-2">
+    <!-- 오늘 해야 할 일 -->
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">오늘 해야 할 일</div>
+      </div>
+      <div class="card-body">
+        <a class="todo-link" href="/customers/dashboard/filter/todo_hospital/">
+          <div class="todo-row">
+            <div class="todo-left"><span class="dot"></span><span class="todo-name">병원 방문</span></div>
+            <div class="todo-count">{{ todo_hospital_visit }}건</div>
+          </div>
+        </a>
+        <a class="todo-link" href="/customers/dashboard/filter/todo_inspection/">
+          <div class="todo-row">
+            <div class="todo-left"><span class="dot"></span><span class="todo-name">검수 확인</span></div>
+            <div class="todo-count">{{ todo_inspection_confirm }}건</div>
+          </div>
+        </a>
+        <a class="todo-link" href="/customers/dashboard/filter/todo_supplement/">
+          <div class="todo-row">
+            <div class="todo-left"><span class="dot"></span><span class="todo-name">서류 보완</span></div>
+            <div class="todo-count">{{ todo_doc_supplement }}건</div>
+          </div>
+        </a>
+        <a class="todo-link" href="/customers/dashboard/filter/todo_submit/">
+          <div class="todo-row">
+            <div class="todo-left"><span class="dot"></span><span class="todo-name">공단 접수</span></div>
+            <div class="todo-count">{{ todo_nhis_submit }}건</div>
+          </div>
+        </a>
+        <a class="todo-link" href="/customers/dashboard/filter/todo_deposit/">
+          <div class="todo-row">
+            <div class="todo-left"><span class="dot"></span><span class="todo-name">공단 입금 여부</span></div>
+            <div class="todo-count">{{ todo_nhis_deposit_check }}건</div>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <div class="dash-right-stack">
+    <!-- 후기적합 관리 -->
+    <div class="card">
+      <div class="card-head followup-head">
+        <div class="card-title">후기적합 관리</div>
+        <a href="/customers/stage/followup/">후기적합 목록 보기  ›</a>
+      </div>
+      <div class="card-body">
+        <div class="followup-cards">
+          <a class="todo-link" href="/customers/dashboard/filter/fu_imminent/"><div class="fu-card blue">
+            <div class="fu-top"><span class="fu-ico">L</span><span>후기적합 임박</span></div>
+            <div class="fu-count">{{ fu_imminent }}건</div>
+            <div class="fu-sub">D-1~D-3</div>
+          </div></a>
+          <a class="todo-link" href="/customers/dashboard/filter/fu_need_submit/"><div class="fu-card yellow">
+            <div class="fu-top"><span class="fu-ico">📄</span><span>후기 접수 필요</span></div>
+            <div class="fu-count">{{ fu_need_submit }}건</div>
+            <div class="fu-sub">기간 내</div>
+          </div></a>
+          <a class="todo-link" href="/customers/dashboard/filter/fu_deposit_pending/"><div class="fu-card red">
+            <div class="fu-top"><span class="fu-ico">₩</span><span>입금 예정</span></div>
+            <div class="fu-count">{{ fu_deposit_pending }}건</div>
+            <div class="fu-sub red">제출 후</div>
+          </div></a>
+          <a class="todo-link" href="/customers/dashboard/filter/renew/"><div class="fu-card purple">
+            <div class="fu-top"><span class="fu-ico">🔁</span><span>재신규 대상</span></div>
+            <div class="fu-count">{{ renew_total }}건</div>
+            <div class="fu-sub">임박 {{ renew_imminent }} · 가능 {{ renew_possible }}</div>
+          </div></a>
+        </div>
+      </div>
+    </div>
+
+
+  <!-- 장기 정체 -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">장기 정체</div>
+    </div>
+    <div class="card-body">
+      <a class="todo-link" href="/customers/dashboard/filter/stagn_exam/">
+        <div class="stagn-row">
+          <div class="stagn-left">
+            <span class="dot"></span>
+            <span class="label">검사 대기</span>
+            <span class="days">{{ stagn_exam_days }}일 경과</span>
+          </div>
+          <div class="stagn-right">{{ stagn_exam_count }}명</div>
+        </div>
+      </a>
+
+      <a class="todo-link" href="/customers/dashboard/filter/stagn_inspection/">
+        <div class="stagn-row">
+          <div class="stagn-left">
+            <span class="dot"></span>
+            <span class="label">검수 대기</span>
+            <span class="days">{{ stagn_inspection_days }}일 경과</span>
+          </div>
+          <div class="stagn-right">{{ stagn_inspection_count }}명</div>
+        </div>
+      </a>
+
+      <a class="todo-link" href="/customers/dashboard/filter/stagn_supplement/">
+        <div class="stagn-row">
+          <div class="stagn-left">
+            <span class="dot"></span>
+            <span class="label">서류 보완</span>
+            <span class="days">{{ stagn_supplement_days }}일 경과</span>
+          </div>
+          <div class="stagn-right">{{ stagn_supplement_count }}명</div>
+        </div>
+      </a>
+
+      <a class="todo-link" href="/customers/dashboard/filter/stagn_submit/">
+        <div class="stagn-row">
+          <div class="stagn-left">
+            <span class="dot"></span>
+            <span class="label">공단 접수</span>
+            <span class="days">{{ stagn_submit_days }}일 경과</span>
+          </div>
+          <div class="stagn-right">{{ stagn_submit_count }}명</div>
+        </div>
+      </a>
+
+      <a class="todo-link" href="/customers/dashboard/filter/stagn_followup/">
+        <div class="stagn-row">
+          <div class="stagn-left">
+            <span class="dot"></span>
+            <span class="label">후기 적합 진행</span>
+            <span class="days">{{ stagn_followup_days }}일 경과</span>
+          </div>
+          <div class="stagn-right">{{ stagn_followup_count }}건</div>
+        </div>
+      </a>
+      </div>
+    </div>
+  </div>
+    </div>
+  </div>
+
+
+  <!-- A/S 관리 -->
+  <div class="card" style="margin-top:12px;">
+    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+      <div class="card-title">A/S 관리</div>
+      <a href="/customers/as/">A/S 목록 보기  ›</a>
+    </div>
+    <div class="card-body">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+        <div class="pill" style="padding:8px 10px; border-radius:999px; background:rgba(37,99,235,.08); font-weight:900;">7일+ 팔로업 {{ as_followup_count }}건</div>
+        <div class="pill" style="padding:8px 10px; border-radius:999px; background:rgba(239,68,68,.08); font-weight:900;">미수(유상) {{ as_unpaid_count }}건</div>
+      </div>
+
+      {% if as_rows %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>고객</th>
+              <th class="w-small">담당</th>
+              <th class="w-small">접수일</th>
+              <th class="w-small">경과</th>
+              <th class="w-small">수납</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in as_rows %}
+              <tr {% if r.followup %}style="background:rgba(239,68,68,.06);"{% endif %}>
+                <td>
+                  <a href="/customers/{{ r.customer.id }}/?tab=A/S&as_id={{ r.as.id }}" style="text-decoration:none; font-weight:900;">{{ r.customer.name }}</a>
+                  <div class="muted" style="font-size:12px; margin-top:2px;">{{ r.as.get_reason_code_display }}{% if r.as.reason_code == 'ETC' and r.as.reason_text %} · {{ r.as.reason_text }}{% endif %}</div>
+                </td>
+                <td>{{ r.as.owner|default:"-" }}</td>
+                <td>{{ r.as.received_at|date:"Y-m-d" }}</td>
+                <td>{% if r.days %}{{ r.days }}일{% else %}0일{% endif %}</td>
+                <td>
+                  {% if r.as.is_paid %}
+                    {% if r.as.payment_status == 'PAID' %}<span style="font-weight:900;">완료</span>{% else %}<span style="font-weight:900; color:#b91c1c;">미수</span>{% endif %}
+                  {% else %}
+                    <span class="muted">무상</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="muted" style="margin-top:10px;">※ 강조 행: 진행중이며 접수일 기준 7일 초과</div>
+      {% else %}
+        <div class="notice">진행중 A/S가 없습니다.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  
+</div>
+
+<script>
+(function(){
+  const wrap = document.getElementById('salesChartWrap');
+  const tip = document.getElementById('salesChartTip');
+  if(!wrap || !tip) return;
+
+  function showTip(el, evt){
+    const text = el.getAttribute('data-tip') || '';
+    if(!text) return;
+    tip.textContent = text;
+    tip.classList.add('show');
+    moveTip(evt);
+  }
+  function hideTip(){
+    tip.classList.remove('show');
+  }
+  function moveTip(evt){
+    const rect = wrap.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  wrap.addEventListener('mousemove', function(evt){
+    if(!tip.classList.contains('show')) return;
+    moveTip(evt);
+  });
+
+  wrap.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('mouseenter', function(evt){ showTip(el, evt); });
+    el.addEventListener('mouseleave', hideTip);
+  });
+})();
+</script>
+
+{% endblock %}
