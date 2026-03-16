@@ -1,8 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django / local runtime
+db.sqlite3
+db.sqlite3-journal
+.runserver.log
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Backups
+.backups/
+backup/
+backups/
+
+# Environment files
+.env
+.env.*
+
+# Node / Next
 node_modules/
 .next/
-venv/
-.DS_Store
-*.pyc
-__pycache__/
-db.sqlite3
-.env
+out/
+
+# Build / cache
+dist/
+build/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Uploaded archives / temp docs
+*.zip
+*.rtf
+
+# Misc
+*.swp
+*.swo
