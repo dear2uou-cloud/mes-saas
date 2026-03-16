@@ -150,6 +150,11 @@
         height: 100%;
     }
 
+    .cal-grid.day-view {
+        grid-template-columns: minmax(0, 420px);
+        justify-content: center;
+    }
+
     .cal-cell {
         background: #fff;
         border: 1px solid var(--dash-border);
@@ -330,9 +335,9 @@
 
                 <div class="cal-controls">
                     <div class="cal-chip-group">
-                        <a href="?view=month&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}" class="cal-chip {% if view == 'month' %}active{% endif %}">월</a>
-                        <a href="?view=week&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}" class="cal-chip {% if view == 'week' %}active{% endif %}">주</a>
                         <a href="?view=day&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}" class="cal-chip {% if view == 'day' %}active{% endif %}">일</a>
+                        <a href="?view=week&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}" class="cal-chip {% if view == 'week' %}active{% endif %}">주</a>
+                        <a href="?view=month&date={{ base_date|date:'Y-m-d' }}{{ extra_qs }}" class="cal-chip {% if view == 'month' %}active{% endif %}">월</a>
                     </div>
 
                     <div class="cal-toggle">
@@ -390,7 +395,7 @@
                     {% endfor %}
                 </div>
                 {% elif view == 'week' or view == 'day' %}
-                <div class="cal-grid" style="{% if view == 'day' %}grid-template-columns: 1fr;{% endif %}">
+                <div class="cal-grid {% if view == 'day' %}day-view{% endif %}">
                     {% for d in days %}
                     {% with key=d|date:"Y-m-d" %}
                     <div class="cal-cell {% if highlight_date and key == highlight_date %}hl-date{% endif %}" style="min-height: 200px;">

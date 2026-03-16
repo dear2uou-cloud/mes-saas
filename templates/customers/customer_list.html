@@ -6,6 +6,30 @@
 
 {% block content %}
 
+<style>
+    .control-bar .btn-action{
+        padding: 5px 9px;
+        border-radius: 999px;
+        text-decoration:none;
+        font-size:13px;
+        font-weight:600;
+        cursor:pointer;
+    }
+
+    .btn-danger{
+        background:#FDE8E8;
+        color:#ff0000;
+        border:none;
+        cursor:pointer;
+    }
+
+    .btn-danger:hover{
+        background:#ffc1c1;
+        cursor:pointer;
+    }
+</style>
+
+
 
 <div class="page-container">
     <!-- 상단 컨트롤 바 -->
@@ -43,7 +67,7 @@
         <!-- 액션 버튼 -->
         <div class="filter-group">
             <a href="{% url 'customers:create' %}" class="btn-action btn-primary">+ 고객 등록</a>
-            <button type="button" id="toggleDeleteMode" class="btn-action btn-white">삭제</button>
+            <button type="button" id="toggleDeleteMode" class="btn-action btn-danger">삭제</button>
         </div>
 
         <!-- 삭제 모드 툴바 (평소엔 숨김) -->

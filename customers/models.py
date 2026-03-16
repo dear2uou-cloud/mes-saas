@@ -263,7 +263,7 @@ class AfterService(models.Model):
     ]
 
     REASON_CHOICES = [
-        ("SOUND", "소리 불만(작다/크다/먹먹함)"),
+        ("SOUND", "소리 불만(작다/크다)"),
         ("FEEDBACK", "피드백(삐소리)"),
         ("CUT", "끊김/간헐적 무음"),
         ("RECEIVER", "리시버/튜브 문제"),
@@ -316,6 +316,7 @@ class AfterService(models.Model):
     memo = models.TextField("메모", blank=True, default="")
 
     amount = models.IntegerField("A/S 비용", default=0)
+    paid_amount = models.IntegerField("결제 금액", default=0)
     payment_status = models.CharField(
         "결제상태",
         max_length=10,
@@ -371,7 +372,21 @@ class AfterServiceEvent(models.Model):
         db_column="type",
         default="CREATED",
     )
+    parent_event = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="children",
+        verbose_name="상위 이벤트",
+    )
     message = models.CharField("내용", max_length=300, blank=True, default="")
+    reason = models.CharField("사유", max_length=200, blank=True, default="")
+    memo = models.CharField("메모", max_length=300, blank=True, default="")
+    amount = models.IntegerField("금액", default=0)
+    payment_method = models.CharField("결제수단", max_length=20, blank=True, default="")
+    tax_type = models.CharField("과세구분", max_length=10, blank=True, default="")
+    happened_on = models.DateField("기준일", null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -1028,3 +1043,26 @@ class DocumentDownloadLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.document_type} - {self.case_id} - {self.created_at}"
+
+
+class UserAuthProfile(models.Model):
+    """계정 이메일/휴대폰 인증 정보."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="auth_profile",
+        verbose_name="계정",
+    )
+    phone = models.CharField("휴대폰번호", max_length=20, unique=True)
+    phone_verified = models.BooleanField("휴대폰 인증 여부", default=False)
+    phone_verified_at = models.DateTimeField("휴대폰 인증일시", null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "계정 인증 프로필"
+        verbose_name_plural = "계정 인증 프로필"
+
+    def __str__(self) -> str:
+        return f"UserAuthProfile({self.user_id}, {self.phone})"

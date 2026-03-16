@@ -238,6 +238,26 @@
             el.style.width = '100%';
         });
 
+
+        var businessRegInput = document.getElementById('id_business_reg_no');
+        if(businessRegInput){
+            businessRegInput.addEventListener('input', function(){
+                var v = businessRegInput.value.replace(/\D/g,'').slice(0,10);
+                if(v.length > 5) v = v.slice(0,3) + '-' + v.slice(3,5) + '-' + v.slice(5);
+                else if(v.length > 3) v = v.slice(0,3) + '-' + v.slice(3);
+                if(businessRegInput.value !== v) businessRegInput.value = v;
+            });
+        }
+
+        var businessPhoneInput = document.getElementById('id_business_phone');
+        if(businessPhoneInput){
+            businessPhoneInput.addEventListener('input', function(){
+                var v = businessPhoneInput.value.replace(/\D/g,'').slice(0,11);
+                if(v.length > 7) v = v.slice(0,3) + '-' + v.slice(3,7) + '-' + v.slice(7);
+                else if(v.length > 3) v = v.slice(0,3) + '-' + v.slice(3);
+                if(businessPhoneInput.value !== v) businessPhoneInput.value = v;
+            });
+        }
         // 주민번호 로직 복원
         var btnEdit = document.getElementById('btnRrnEdit');
         var editBox = document.getElementById('rrnEditBox');

@@ -12,6 +12,11 @@
   .btn-white{ background:#fff; border:1px solid var(--dash-border); color:var(--dash-sub); }
   .list-card{ background:#fff; border:1px solid var(--dash-border); border-radius:var(--dash-radius); box-shadow:var(--dash-shadow); overflow:hidden; }
   .inv-help{ margin-top:12px; padding:12px; background:#f8fafc; border:1px solid var(--dash-border); border-radius:12px; color:#6b7280; font-size:13px; line-height:1.55; }
+  .um-consent-copy{ color:#475467; font-size:14px; line-height:1.7; }
+  .um-consent-check{ display:flex; align-items:flex-start; gap:10px; margin-top:16px; padding:12px 14px; border:1px solid var(--dash-border); border-radius:12px; background:#f8fafc; }
+  .um-consent-check input{ margin-top:2px; width:16px; height:16px; }
+  .um-consent-check label{ margin:0; color:#344054; font-size:14px; font-weight:700; line-height:1.5; cursor:pointer; }
+  .um-consent-notice{ margin-top:14px; color:#667085; font-size:13px; }
 
   /* 기존 모달/업로드 스타일 유지 */
   .inv-modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;}
@@ -35,7 +40,7 @@
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
       <a class="btn-action btn-white" href="/customers/settings/upload-management/template/basic/">양식 다운로드(기본)</a>
       <a class="btn-action btn-white" href="/customers/settings/upload-management/template/rrn/">양식 다운로드(주민번호 포함)</a>
-      <button class="btn-action btn-primary" type="button" onclick="umOpen('umUploadModal')">CSV 업로드</button>
+      <button class="btn-action btn-primary" type="button" onclick="umOpenConsent()">CSV 업로드</button>
     </div>
   </div>
 
@@ -64,6 +69,35 @@
       <div id="umResultBody"></div>
       <div class="inv-modal-actions">
         <button class="btn-action btn-white" type="button" onclick="umClose('umResultModal')">닫기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 업로드 동의 모달 -->
+<div id="umConsentModal" class="inv-modal-backdrop" onclick="if(event.target===this) umCloseConsent()">
+  <div class="inv-modal" style="width:min(640px, 92vw);">
+    <div class="inv-modal-header">
+      <div class="inv-modal-title">고객 정보 업로드 안내</div>
+      <button class="inv-modal-close" type="button" onclick="umCloseConsent()">×</button>
+    </div>
+    <div class="inv-modal-body">
+      <div class="um-consent-copy">
+        고객 정보가 포함된 파일을 업로드 진행 시<br/>
+        <br/>
+        업로드된 자료는 보안 정책에 따라<br/>
+        <strong>암호화되어 안전하게 보관되며, 업로드 이후에는 파일 다운로드가 제공되지 않습니다.</strong><br/><br/>
+        업로드를 진행하시려면 아래 내용을 확인하신 후 동의해 주시기 바랍니다.
+      </div>
+      <div class="um-consent-check">
+        <input type="checkbox" id="umConsentCheck" onchange="umSyncConsentState()">
+        <label for="umConsentCheck">위 내용을 확인하였으며 고객 정보 업로드에 동의합니다.</label>
+      </div>
+      <div id="umConsentNotice" class="um-consent-notice"></div>
+      <div class="inv-modal-actions">
+        <button class="btn-action btn-white" type="button" onclick="umCloseConsent()">닫기</button>
+        <button id="umConsentBtn" class="btn-action btn-primary" type="button" onclick="umConfirmConsent()" disabled style="opacity:.45; cursor:not-allowed;">동의하고 진행</button>
       </div>
     </div>
   </div>
@@ -115,6 +149,74 @@
   }
   function umClose(id){
     document.getElementById(id).style.display='none';
+  }
+
+  let umConsentTimer = null;
+
+  function umResetConsentModal(){
+    const check = document.getElementById('umConsentCheck');
+    const btn = document.getElementById('umConsentBtn');
+    const notice = document.getElementById('umConsentNotice');
+    if(check) check.checked = false;
+    if(btn){
+      btn.disabled = true;
+      btn.textContent = '동의하고 진행';
+      btn.style.opacity = '.45';
+      btn.style.cursor = 'not-allowed';
+    }
+    if(notice) notice.textContent = '';
+    if(umConsentTimer){
+      clearTimeout(umConsentTimer);
+      umConsentTimer = null;
+    }
+  }
+
+  function umOpenConsent(){
+    umResetConsentModal();
+    umOpen('umConsentModal');
+  }
+
+  function umCloseConsent(){
+    umResetConsentModal();
+    umClose('umConsentModal');
+  }
+
+  function umSyncConsentState(){
+    const check = document.getElementById('umConsentCheck');
+    const btn = document.getElementById('umConsentBtn');
+    if(!check || !btn) return;
+    const on = !!check.checked;
+    btn.disabled = !on;
+    btn.textContent = on ? '동의완료' : '동의하고 진행';
+    btn.style.opacity = on ? '1' : '.45';
+    btn.style.cursor = on ? 'pointer' : 'not-allowed';
+  }
+
+  function umConfirmConsent(){
+    const check = document.getElementById('umConsentCheck');
+    const notice = document.getElementById('umConsentNotice');
+    const btn = document.getElementById('umConsentBtn');
+    if(!check || !check.checked){
+      umSyncConsentState();
+      return;
+    }
+    if(btn){
+      btn.disabled = true;
+      btn.textContent = '동의완료';
+      btn.style.opacity = '1';
+      btn.style.cursor = 'default';
+    }
+    if(notice){
+      notice.textContent = '동의가 완료되었습니다. 잠시 후 업로드 화면으로 이동합니다. (2초 후 자동 진행됩니다.)';
+    }
+    if(umConsentTimer){
+      clearTimeout(umConsentTimer);
+    }
+    umConsentTimer = setTimeout(()=>{
+      umConsentTimer = null;
+      umCloseConsent();
+      umOpen('umUploadModal');
+    }, 2000);
   }
 
   function umSetStatus(msg){

@@ -240,7 +240,15 @@
         border: 1px solid var(--dash-border);
         color: var(--dash-text);
     }
-
+    .dash-chart-scroll {
+        width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: 4px;
+        display: flex;
+        justify-content: center;
+    }
+    
     .dash-chart-area {
         display: grid;
         grid-template-columns: repeat(var(--chart-columns, 7), minmax(0, 1fr));
@@ -248,6 +256,15 @@
         align-items: end;
         min-height: 470px;
         padding: 4px 0 0;
+    }
+
+    .dash-chart-area.day {
+        width: 25%;
+        min-width: 220px;
+        max-width: 260px;
+        margin: 0 auto;
+        grid-template-columns: repeat(var(--chart-columns, 7), 170px);
+        justify-content: center;
     }
 
     .dash-bar-item {
@@ -642,7 +659,7 @@
                 </div>
             </div>
 
-            <div class="dash-chart-area" style="--chart-columns: {{ chart_dataset|length|default:7 }};">
+            <div class="dash-chart-area {% if period == 'day' %}day{% endif %}" style="--chart-columns: {{ chart_dataset|length|default:7 }};">
                 {% for item in chart_dataset %}
                     <div class="dash-bar-item">
                         <div class="dash-bar-track">

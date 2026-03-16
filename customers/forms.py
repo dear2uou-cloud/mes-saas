@@ -5,6 +5,37 @@ from .models import Customer, CustomerCase, PaymentItem, PaymentTransaction, Bus
 from .models import Consultation
 
 
+def _digits_only(value):
+    return ''.join(ch for ch in str(value or '') if ch.isdigit())
+
+
+def _format_mobile_phone(value):
+    digits = _digits_only(value)[:11]
+    if not digits:
+        return ''
+    if len(digits) != 11:
+        raise forms.ValidationError('연락처는 11자리 숫자로 입력해 주세요.')
+    return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
+
+
+def _format_rrn(value):
+    digits = _digits_only(value)[:13]
+    if not digits:
+        return ''
+    if len(digits) != 13:
+        raise forms.ValidationError('주민등록번호 13자리를 입력해 주세요.')
+    return f"{digits[:6]}-{digits[6:]}"
+
+
+def _format_business_reg_no(value):
+    digits = _digits_only(value)[:10]
+    if not digits:
+        return ''
+    if len(digits) != 10:
+        raise forms.ValidationError('사업자등록번호 10자리를 입력해 주세요.')
+    return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+
+
 def _apply_input_class(fields):
     for f in fields.values():
         if isinstance(f.widget, (forms.TextInput, forms.DateInput, forms.NumberInput)):
@@ -23,8 +54,8 @@ class CustomerCreateForm(ModelForm):
         fields = ["name", "phone", "rrn_full", "address_summary", "guardian_phone", "memo", "담당자"]
         widgets = {
             "name": forms.TextInput(attrs={"class": "input"}),
-            "phone": forms.TextInput(attrs={"class": "input"}),
-            "rrn_full": forms.TextInput(attrs={"class": "input", "placeholder": "예: 900101-1234567"}),
+            "phone": forms.TextInput(attrs={"class": "input", "placeholder": "예: 010-1234-5678", "maxlength": "13", "inputmode": "numeric", "autocomplete": "off"}),
+            "rrn_full": forms.TextInput(attrs={"class": "input", "placeholder": "예: 900101-1234567", "maxlength": "14", "inputmode": "numeric", "autocomplete": "off"}),
             "address_summary": forms.TextInput(attrs={"class": "input"}),
             "guardian_phone": forms.TextInput(attrs={"class": "input"}),
             "memo": forms.Textarea(attrs={"class": "input", "rows": 3}),
@@ -51,6 +82,12 @@ class CustomerCreateForm(ModelForm):
                 # 나머지는 필수 아님 (HTML5 required 제거)
                 field.required = False
                 field.widget.attrs.pop("required", None)
+
+    def clean_phone(self):
+        return _format_mobile_phone(self.cleaned_data.get("phone"))
+
+    def clean_rrn_full(self):
+        return _format_rrn(self.cleaned_data.get("rrn_full"))
 
 
 class CustomerInfoInlineForm(ModelForm):
@@ -706,8 +743,8 @@ class BusinessProfileForm(ModelForm):
         widgets = {
             "business_name": forms.TextInput(attrs={"class": "input"}),
             "representative_name": forms.TextInput(attrs={"class": "input"}),
-            "business_reg_no": forms.TextInput(attrs={"class": "input"}),
-            "business_phone": forms.TextInput(attrs={"class": "input"}),
+            "business_reg_no": forms.TextInput(attrs={"class": "input", "placeholder": "예: 123-45-67890", "maxlength": "12", "inputmode": "numeric", "autocomplete": "off"}),
+            "business_phone": forms.TextInput(attrs={"class": "input", "placeholder": "예: 010-1234-5678", "maxlength": "13", "inputmode": "numeric", "autocomplete": "off"}),
             "business_address": forms.TextInput(attrs={"class": "input"}),
             "business_type": forms.TextInput(attrs={"class": "input"}),
             "business_item": forms.TextInput(attrs={"class": "input"}),
@@ -725,15 +762,14 @@ class BusinessProfileForm(ModelForm):
 
 
 
+    def clean_business_reg_no(self):
+        return _format_business_reg_no(self.cleaned_data.get("business_reg_no"))
+
+    def clean_business_phone(self):
+        return _format_mobile_phone(self.cleaned_data.get("business_phone"))
+
     def clean_rep_rrn_full(self):
-        v = (self.cleaned_data.get("rep_rrn_full") or "").strip()
-        if not v:
-            return v
-        digits = ''.join(ch for ch in v if ch.isdigit())
-        if len(digits) != 13:
-            raise forms.ValidationError('주민등록번호 13자리를 입력해 주세요.')
-        # 기본 표기(6-7)로 정규화해서 저장
-        return f"{digits[:6]}-{digits[6:]}"
+        return _format_rrn(self.cleaned_data.get("rep_rrn_full"))
 
 class ConsultationForm(ModelForm):
     class Meta:
@@ -783,6 +819,17 @@ class AfterServiceForm(ModelForm):
             }
         ),
     )
+    paid_amount = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input money-input",
+                "inputmode": "numeric",
+                "autocomplete": "off",
+                "placeholder": "예: 1,000",
+            }
+        ),
+    )
 
     # ✅ 무상 → 유상 전환 사유(모달에서 입력, 저장 시 이벤트로 기록)
     paid_toggle_reason = forms.CharField(
@@ -807,7 +854,7 @@ class AfterServiceForm(ModelForm):
             "memo",
             "is_paid",
             "amount",
-            "payment_status",
+            "paid_amount",
             "payment_method",
             "tax_type",
             "paid_at",
@@ -823,7 +870,6 @@ class AfterServiceForm(ModelForm):
             "memo": forms.Textarea(attrs={"class": "textarea", "rows": 3, "placeholder": "메모(선택)"}),
             "is_paid": forms.CheckboxInput(attrs={"class": "checkbox"}),
             # amount/refund_amount는 위에서 CharField로 오버라이드
-            "payment_status": forms.Select(attrs={"class": "select"}),
             "payment_method": forms.Select(attrs={"class": "select"}),
             "tax_type": forms.Select(attrs={"class": "select"}),
             "paid_at": forms.DateInput(attrs={"class": "input", "type": "date"}),
@@ -892,6 +938,7 @@ class AfterServiceForm(ModelForm):
         status = (cleaned.get("status") or "").strip()
         is_paid = bool(cleaned.get("is_paid"))
         amount = _money_to_int(cleaned.get("amount"))
+        paid_amount = _money_to_int(cleaned.get("paid_amount"))
         paid_at = cleaned.get("paid_at")
         deposited_at = cleaned.get("deposited_at")
         # 환불은 별도 처리 (refund_after_service)
@@ -915,11 +962,7 @@ class AfterServiceForm(ModelForm):
         if self.instance and self.instance.pk:
             try:
                 prev_paid = bool(self.instance.is_paid)
-                # 무상 → 유상 전환: 사유 필수(모달)
-                if (not prev_paid) and is_paid:
-                    reason = (cleaned.get("paid_toggle_reason") or "").strip()
-                    if not reason:
-                        self.add_error(None, "무상 → 유상 전환 사유를 입력해 주세요.")
+                # 무상 → 유상 전환: 즉시 허용
                 if prev_paid and (not is_paid):
                     prev_amount = int(getattr(self.instance, "amount", 0) or 0)
                     prev_refund = int(getattr(self.instance, "refund_amount", 0) or 0)
@@ -933,6 +976,7 @@ class AfterServiceForm(ModelForm):
             # (수정 시에는 위의 변경불가 규칙으로 인해 기존 유상 데이터가 임의로 지워지지 않습니다.)
             if not (self.instance and self.instance.pk):
                 cleaned["amount"] = 0
+                cleaned["paid_amount"] = 0
                 cleaned["payment_status"] = ""
                 cleaned["payment_method"] = ""
                 cleaned["tax_type"] = ""
@@ -940,16 +984,30 @@ class AfterServiceForm(ModelForm):
                 cleaned["deposited_at"] = None
         else:
             cleaned["amount"] = amount
+            cleaned["paid_amount"] = paid_amount
             if amount <= 0:
                 self.add_error("amount", "유상일 때는 비용을 입력해 주세요.")
+            if paid_amount < 0:
+                self.add_error("paid_amount", "결제 금액이 올바르지 않습니다.")
+            if paid_amount > amount > 0:
+                self.add_error("paid_amount", "결제 금액은 비용을 초과할 수 없습니다.")
 
-            # 결제상태는 선택 입력에서 제외 (요청사항). 결제일이 있으면 수납완료로 자동 판정합니다.
-            cleaned["payment_status"] = "PAID" if paid_at else "UNPAID"
+            method = (cleaned.get("payment_method") or "").strip()
+            if paid_amount > 0:
+                if not method:
+                    self.add_error("payment_method", "결제 방식을 선택해 주세요.")
+                if method == "카드" and not paid_at:
+                    self.add_error("paid_at", "카드 결제 시 결제일을 입력해 주세요.")
+                if method and method != "카드" and not deposited_at:
+                    self.add_error("deposited_at", "입금일을 입력해 주세요.")
+
+            # 결제상태는 자동 판정(저장 시 views에서 누적 결제/환불 기준 재계산)
+            cleaned["payment_status"] = ""
 
             # 과세구분은 센터 정책상 유상 A/S는 항상 "과세"로 고정합니다.
             cleaned["tax_type"] = "과세"
 
             # 결제일/입금일은 선택(센터마다 다름)
-            # - 매출분석에서 결제일/입금일 기준을 모두 지원하므로, 가능한 입력을 권장합니다.
+            # - 카드: 결제일, 그 외: 입금일
 
         return cleaned

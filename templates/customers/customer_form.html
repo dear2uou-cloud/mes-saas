@@ -106,3 +106,67 @@
   </div>
 </div>
 {% endblock %}
+
+
+{% block extra_js %}
+<script>
+(function(){
+  function digitsOnly(value){
+    return String(value || '').replace(/\D/g, '');
+  }
+
+  function bindPhoneFormat(selector){
+    var input = document.querySelector(selector);
+    if(!input) return;
+
+    input.setAttribute('maxlength', '13');
+    input.setAttribute('inputmode', 'numeric');
+    input.setAttribute('autocomplete', 'off');
+
+    input.addEventListener('input', function(){
+      var digits = digitsOnly(input.value).slice(0, 11);
+      var formatted = digits;
+
+      if(digits.length > 7){
+        formatted = digits.slice(0, 3) + '-' + digits.slice(3, 7) + '-' + digits.slice(7);
+      }else if(digits.length > 3){
+        formatted = digits.slice(0, 3) + '-' + digits.slice(3);
+      }
+
+      if(input.value !== formatted){
+        input.value = formatted;
+      }
+    });
+
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function bindRrnFormat(selector){
+    var input = document.querySelector(selector);
+    if(!input) return;
+
+    input.setAttribute('maxlength', '14');
+    input.setAttribute('inputmode', 'numeric');
+    input.setAttribute('autocomplete', 'off');
+
+    input.addEventListener('input', function(){
+      var digits = digitsOnly(input.value).slice(0, 13);
+      var formatted = digits;
+
+      if(digits.length > 6){
+        formatted = digits.slice(0, 6) + '-' + digits.slice(6);
+      }
+
+      if(input.value !== formatted){
+        input.value = formatted;
+      }
+    });
+
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  bindPhoneFormat('input[name="phone"]');
+  bindRrnFormat('input[name="rrn_full"]');
+})();
+</script>
+{% endblock %}

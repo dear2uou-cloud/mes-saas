@@ -26,7 +26,7 @@ class Migration(migrations.Migration):
                 ('received_at', models.DateField(verbose_name='접수일')),
                 ('completed_at', models.DateField(blank=True, null=True, verbose_name='완료일')),
                 ('canceled_at', models.DateField(blank=True, null=True, verbose_name='취소일')),
-                ('reason_code', models.CharField(choices=[('SOUND', '소리 불만(작다/크다/먹먹함)'), ('FEEDBACK', '피드백(삐소리)'), ('CUT', '끊김/간헐적 무음'), ('RECEIVER', '리시버/튜브 문제'), ('BATTERY', '배터리/충전 문제'), ('BT', '블루투스/연결 문제'), ('LOST', '분실/파손'), ('CLEAN', '청소/필터/돔 교체'), ('CHECK', '점검 요청(정기 점검)'), ('ETC', '기타(직접입력)')], default='SOUND', max_length=20, verbose_name='사유')),
+                ('reason_code', models.CharField(choices=[('SOUND', '소리 불만(작다/크다)'), ('FEEDBACK', '피드백(삐소리)'), ('CUT', '끊김/간헐적 무음'), ('RECEIVER', '리시버/튜브 문제'), ('BATTERY', '배터리/충전 문제'), ('BT', '블루투스/연결 문제'), ('LOST', '분실/파손'), ('CLEAN', '청소/필터/돔 교체'), ('CHECK', '점검 요청(정기 점검)'), ('ETC', '기타(직접입력)')], default='SOUND', max_length=20, verbose_name='사유')),
                 ('reason_text', models.CharField(blank=True, default='', max_length=200, verbose_name='사유 상세')),
                 ('memo', models.TextField(blank=True, default='', verbose_name='메모')),
                 ('amount', models.IntegerField(default=0, verbose_name='A/S 비용')),

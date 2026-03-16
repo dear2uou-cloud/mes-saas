@@ -207,6 +207,325 @@ def _build_payment_groups(case: CustomerCase):
 
 
 
+def _as_event_amount(ev: AfterServiceEvent) -> int:
+    try:
+        amt = int(getattr(ev, "amount", 0) or 0)
+        if amt > 0:
+            return amt
+    except Exception:
+        pass
+    msg = (getattr(ev, "message", "") or "").strip()
+    m = re.search(r"([0-9,]+)원", msg)
+    if not m:
+        return 0
+    try:
+        return int(m.group(1).replace(",", ""))
+    except Exception:
+        return 0
+
+
+def _after_service_payment_summary(as_obj: AfterService) -> tuple[int, int, int, int]:
+    """A/S 결제 이벤트 기준으로 누적 결제/환불/실결제/부족금을 계산합니다."""
+    payment_total = 0
+    refund_total = 0
+    
+    print(f"\n{'='*60}")
+    print(f"💰 _after_service_payment_summary (ID={getattr(as_obj, 'id', '?')})")
+    print(f"{'='*60}")
+    
+    for ev in AfterServiceEvent.objects.filter(after_service=as_obj).order_by("created_at", "id"):
+        ev_type = getattr(ev, "event_type", "")
+        amt = _as_event_amount(ev)
+        print(f"이벤트 ID={ev.id}: type={ev_type}, amount={amt:,}원")
+        if ev_type == "PAYMENT":
+            payment_total += amt
+        elif ev_type == "REFUND":
+            refund_total += amt
+    
+    net_paid = max(payment_total - refund_total, 0)
+    outstanding = max(int(getattr(as_obj, "amount", 0) or 0) - net_paid, 0)
+    
+    print(f"---")
+    print(f"총 결제: {payment_total:,}원")
+    print(f"총 환불: {refund_total:,}원")
+    print(f"순 결제: {net_paid:,}원")
+    print(f"미수금: {outstanding:,}원")
+    print(f"{'='*60}\n")
+    
+    return payment_total, refund_total, net_paid, outstanding
+
+
+def _after_service_should_force_in_progress(as_obj: AfterService) -> bool:
+    """무상→유상 전환 이력이 있는 A/S는 자동 완료시키지 않습니다."""
+    try:
+        return AfterServiceEvent.objects.filter(
+            after_service=as_obj,
+            event_type="MEMO",
+            message="유/무상 전환(무상→유상)",
+        ).exists()
+    except Exception:
+        return False
+
+
+def _sync_after_service_payment_state(as_obj: AfterService, *, force_in_progress: bool = False) -> tuple[int, int]:
+    """A/S 결제/환불 이벤트 기준으로 누적 결제와 미수 상태를 모델에 반영합니다."""
+    _payment_total, refund_total, net_paid, outstanding = _after_service_payment_summary(as_obj)
+    updates = []
+    new_payment_status = ""
+    if bool(getattr(as_obj, "is_paid", False)) and int(getattr(as_obj, "amount", 0) or 0) > 0:
+        new_payment_status = "PAID" if outstanding == 0 else "UNPAID"
+    if (as_obj.payment_status or "") != new_payment_status:
+        as_obj.payment_status = new_payment_status
+        updates.append("payment_status")
+    if int(getattr(as_obj, "refund_amount", 0) or 0) != refund_total:
+        as_obj.refund_amount = refund_total
+        updates.append("refund_amount")
+    if refund_total > 0:
+        latest_refund = AfterServiceEvent.objects.filter(after_service=as_obj, event_type="REFUND").order_by("-created_at", "-id").first()
+        refund_date = getattr(latest_refund, "happened_on", None) if latest_refund else None
+        if as_obj.refund_at != refund_date:
+            as_obj.refund_at = refund_date
+            updates.append("refund_at")
+    elif as_obj.refund_at is not None:
+        as_obj.refund_at = None
+        updates.append("refund_at")
+
+    # 완료/취소 상태는 명시적으로 설정된 것으로 간주하여 보존
+    preserve_manual_completed = as_obj.status in ("COMPLETED", "CANCELED")
+    persist_force_in_progress = (force_in_progress or _after_service_should_force_in_progress(as_obj)) and not preserve_manual_completed
+
+    # 🔍 디버깅: 상태 동기화 추적
+    print(f"\n{'='*60}")
+    print(f"🔄 _sync_after_service_payment_state (ID={getattr(as_obj, 'id', '?')})")
+    print(f"{'='*60}")
+    print(f"현재 상태: {as_obj.status}")
+    print(f"순 결제: {net_paid:,}원 | 미수: {outstanding:,}원")
+    print(f"force_in_progress 인자: {force_in_progress}")
+    print(f"무상→유상 전환 이력: {_after_service_should_force_in_progress(as_obj)}")
+    print(f"preserve_manual_completed: {preserve_manual_completed}")
+    print(f"persist_force_in_progress: {persist_force_in_progress}")
+
+    if as_obj.status != "CANCELED" and persist_force_in_progress:
+        print(f"⚠️ 강제 진행중 전환 발동!")
+        if as_obj.status != "IN_PROGRESS":
+            print(f"   상태 변경: {as_obj.status} → IN_PROGRESS")
+            as_obj.status = "IN_PROGRESS"
+            updates.append("status")
+        if as_obj.completed_at is not None:
+            print(f"   완료일 삭제")
+            as_obj.completed_at = None
+            updates.append("completed_at")
+    else:
+        print(f"✅ 상태 보존 (변경 없음)")
+    
+    print(f"업데이트 필드: {updates}")
+    print(f"{'='*60}\n")
+
+    if updates:
+        if "updated_at" not in updates:
+            updates.append("updated_at")
+        as_obj.save(update_fields=list(dict.fromkeys(updates)))
+    return net_paid, outstanding
+
+
+def _build_as_timeline_items(after_service: AfterService | None):
+    if after_service is None:
+        return []
+
+    def _fallback_reason() -> str:
+        try:
+            label = after_service.get_reason_code_display()
+        except Exception:
+            label = (getattr(after_service, "reason_code", "") or "").strip()
+        detail = (getattr(after_service, "reason_text", "") or "").strip()
+        return f"{label} · {detail}" if (label and detail) else label
+
+    fallback_reason = _fallback_reason().strip()
+    fallback_memo = (getattr(after_service, "memo", "") or "").strip()
+
+    event_qs = (
+        AfterServiceEvent.objects.filter(after_service=after_service)
+        .select_related("parent_event")
+        .order_by("-created_at", "-id")
+    )
+    events = list(event_qs)
+
+    children_by_parent: dict[int, list[AfterServiceEvent]] = {}
+    top_events: list[AfterServiceEvent] = []
+    orphan_refunds: list[AfterServiceEvent] = []
+    payment_events: list[AfterServiceEvent] = []
+
+    for ev in events:
+        ev_type = getattr(ev, "event_type", "")
+        pid = getattr(ev, "parent_event_id", None)
+        if pid:
+            children_by_parent.setdefault(pid, []).append(ev)
+            continue
+        if ev_type == "REFUND":
+            orphan_refunds.append(ev)
+            continue
+        top_events.append(ev)
+        if ev_type == "PAYMENT":
+            payment_events.append(ev)
+
+    # 과거 데이터 보정: 유상 A/S인데 결제 이벤트가 누락된 경우에도 타임라인에서 유상 상태가 보이도록 1건 보강합니다.
+    if not payment_events and bool(getattr(after_service, "is_paid", False)) and int(getattr(after_service, "amount", 0) or 0) > 0:
+        synthetic = type("SyntheticASEvent", (), {})()
+        synthetic.id = None
+        synthetic.parent_event_id = None
+        synthetic.event_type = "PAYMENT"
+        synthetic.message = "결제"
+        synthetic.reason = fallback_reason
+        synthetic.memo = fallback_memo
+        synthetic.amount = int(getattr(after_service, "amount", 0) or 0) if (getattr(after_service, "payment_status", "") == "PAID") else 0
+        synthetic.payment_method = (getattr(after_service, "payment_method", "") or "").strip()
+        synthetic.tax_type = "과세" if bool(getattr(after_service, "is_paid", False)) else ""
+        synthetic.happened_on = getattr(after_service, "paid_at", None) or getattr(after_service, "deposited_at", None) or getattr(after_service, "received_at", None)
+        synthetic.created_at = getattr(after_service, "updated_at", None) or getattr(after_service, "created_at", None)
+        synthetic.synthetic_unpaid_marker = (getattr(after_service, "payment_status", "") != "PAID")
+        top_events.insert(0, synthetic)
+        payment_events.append(synthetic)
+
+    # 부모 연결이 없는 기존 환불은 결제 1건일 때 해당 결제 아래에 붙여서 표시합니다.
+    if orphan_refunds and len(payment_events) == 1:
+        parent = payment_events[0]
+        parent_id = getattr(parent, "id", None)
+        if parent_id is not None:
+            children_by_parent.setdefault(parent_id, []).extend(orphan_refunds)
+        else:
+            children_by_parent.setdefault(-1, []).extend(orphan_refunds)
+
+    for pid in list(children_by_parent.keys()):
+        children_by_parent[pid] = sorted(children_by_parent[pid], key=lambda x: (x.created_at, getattr(x, "id", 0) or 0))
+
+    items = []
+    for ev in top_events:
+        ev_id = getattr(ev, "id", None)
+        ev_type = getattr(ev, "event_type", "")
+        reason = (getattr(ev, "reason", "") or "").strip()
+        memo = (getattr(ev, "memo", "") or "").strip()
+        item = {
+            "event": ev,
+            "badge": "접수",
+            "badge_class": "receipt",
+            "title": (getattr(ev, "message", "") or "").strip() or "A/S 접수",
+            "reason": reason or fallback_reason,
+            "memo": memo or fallback_memo,
+            "display_date": getattr(ev, "happened_on", None),
+            "children": [],
+            "refund_button": False,
+            "refundable_remaining": 0,
+        }
+        if ev_type == "PAYMENT":
+            item["badge"] = "유상"
+            item["badge_class"] = "payment"
+            amt = _as_event_amount(ev)
+            method = (getattr(ev, "payment_method", "") or "").strip()
+            tax = (getattr(ev, "tax_type", "") or "").strip() or ("과세" if bool(getattr(after_service, "is_paid", False)) else "")
+            total_amount = int(getattr(after_service, "amount", 0) or 0)
+            if bool(getattr(ev, "synthetic_unpaid_marker", False)):
+                bits = [f"유상 · 총비용 {total_amount:,}원"] if total_amount > 0 else ["유상 설정"]
+            elif amt > 0:
+                bits = [f"유상 · {amt:,}원"]
+            elif total_amount > 0:
+                bits = [f"유상 · 총비용 {total_amount:,}원"]
+            else:
+                bits = ["유상"]
+            if method:
+                bits.append(method)
+            if tax:
+                bits.append(tax)
+            item["title"] = " · ".join(bits)
+            child_key = ev_id if ev_id is not None else -1
+            child_events = children_by_parent.get(child_key, [])
+            refunded_total = sum(_as_event_amount(ch) for ch in child_events if getattr(ch, "event_type", "") == "REFUND")
+            repaid_total = sum(_as_event_amount(ch) for ch in child_events if getattr(ch, "event_type", "") == "PAYMENT")
+            item["refundable_remaining"] = max(amt + repaid_total - refunded_total, 0)
+            item["refund_button"] = ev_id is not None and item["refundable_remaining"] > 0
+            item["repayable_remaining"] = max(refunded_total - repaid_total, 0)
+            item["reason"] = reason or fallback_reason
+            item["memo"] = memo or fallback_memo
+        elif ev_type == "STATUS":
+            item["badge"] = "상태"
+            msg = (getattr(ev, "message", "") or "").strip()
+            if "완료" in msg:
+                item["badge_class"] = "done"
+            elif "취소" in msg:
+                item["badge_class"] = "cancel"
+            else:
+                item["badge_class"] = "status"
+            item["title"] = msg or "상태 변경"
+        elif ev_type == "MEMO":
+            item["badge"] = "메모"
+            item["badge_class"] = "memo"
+            item["title"] = (getattr(ev, "message", "") or "").strip() or "메모"
+        else:
+            item["badge"] = "접수"
+            item["badge_class"] = "receipt"
+            item["title"] = (getattr(ev, "message", "") or "").strip() or "A/S 접수"
+
+        child_items = []
+        child_key = ev_id if ev_id is not None else -1
+        child_events = children_by_parent.get(child_key, [])
+        latest_refund_id = None
+        if item.get("repayable_remaining", 0) > 0:
+            for _child in reversed(child_events):
+                if getattr(_child, "event_type", "") == "REFUND":
+                    latest_refund_id = getattr(_child, "id", None)
+                    break
+        for ch in child_events:
+            ch_type = getattr(ch, "event_type", "")
+            ch_reason = (getattr(ch, "reason", "") or "").strip()
+            ch_memo = (getattr(ch, "memo", "") or "").strip()
+            if ch_type == "REFUND":
+                amt = _as_event_amount(ch)
+                child_items.append({
+                    "event": ch,
+                    "badge": "환불",
+                    "badge_class": "refund",
+                    "title": f"환불 {amt:,}원" + (f" · {ch_memo}" if ch_memo else ""),
+                    "reason": ch_reason,
+                    "memo": ch_memo,
+                    "display_date": getattr(ch, "happened_on", None),
+                    "repay_button": bool(ev_id is not None and latest_refund_id is not None and getattr(ch, "id", None) == latest_refund_id and item.get("repayable_remaining", 0) > 0),
+                    "repay_remaining": item.get("repayable_remaining", 0),
+                    "parent_payment_event_id": ev_id,
+                    "payment_method": (getattr(ev, "payment_method", "") or "").strip(),
+                })
+            elif ch_type == "PAYMENT":
+                amt = _as_event_amount(ch)
+                method = (getattr(ch, "payment_method", "") or "").strip()
+                tax = (getattr(ch, "tax_type", "") or "").strip() or ("과세" if bool(getattr(after_service, "is_paid", False)) else "")
+                bits = [f"재결제 {amt:,}원"] if amt > 0 else ["재결제"]
+                if method:
+                    bits.append(method)
+                if tax:
+                    bits.append(tax)
+                child_items.append({
+                    "event": ch,
+                    "badge": "재결제",
+                    "badge_class": "payment",
+                    "title": " · ".join(bits),
+                    "reason": ch_reason,
+                    "memo": ch_memo,
+                    "display_date": getattr(ch, "happened_on", None),
+                })
+            else:
+                child_items.append({
+                    "event": ch,
+                    "badge": "이력",
+                    "badge_class": "status",
+                    "title": (getattr(ch, "message", "") or "").strip() or ch_type,
+                    "reason": ch_reason,
+                    "memo": ch_memo,
+                    "display_date": getattr(ch, "happened_on", None),
+                })
+        item["children"] = child_items
+        items.append(item)
+
+    return items
+
+
 def _get_latest_case(customer: Customer) -> CustomerCase | None:
     return (
         CustomerCase.objects.filter(customer=customer)
@@ -1441,14 +1760,15 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
     # ✅ 단계 순서(확정): 고객정보 -> 상담 -> 검사 -> 제품/결제 -> 공단 -> 후기적합
     # ✅ 직접구매면 '검사'/'공단'/'후기적합' 탭은 숨김(단, 상담은 유지)
+    direct_exam_mode = (customer.track == "직접구매" and request.GET.get("direct_exam") == "1" and tab == "검사")
     if customer.track == "직접구매":
         allowed_tabs = ["고객정보", "상담", "제품/결제", "A/S"]
-        if tab in ("검사", "공단", "후기적합"):
+        if not direct_exam_mode and tab in ("검사", "공단", "후기적합"):
             tab = "제품/결제"
     else:
         allowed_tabs = ["고객정보", "상담", "검사", "제품/결제", "공단", "후기적합", "A/S"]
 
-    if tab not in allowed_tabs:
+    if tab not in allowed_tabs and not direct_exam_mode:
         tab = allowed_tabs[0]
 
 
@@ -1458,7 +1778,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         if case_obj is not None:
             params["case"] = str(getattr(case_obj, "id", case_obj))
         # 상담 탭에서 넘어올 때 scroll 파라미터가 redirect 과정에서 사라지지 않도록 보존
-        for k in ("scroll", "hl", "ag"):
+        for k in ("scroll", "hl", "ag", "direct_exam"):
             v = request.GET.get(k)
             if v:
                 params[k] = v
@@ -1684,11 +2004,13 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     after_services = list(
         AfterService.objects.filter(customer=customer).order_by("-created_at", "-id")
     )
-    # A/S 카드 잔액(결제-환불) 계산: 템플릿에서 연산하지 않도록 여기서 주입
+    # A/S 카드 표시용 금액 계산
+    # - 유상 금액: 결제 누적금액(net_paid)
+    # - 부족금액: 총 비용 - 실결제 누적금액
     for a in after_services:
-        a.remaining_amount = (getattr(a, "amount", 0) or 0) - (getattr(a, "refund_amount", 0) or 0)
-        if a.remaining_amount < 0:
-            a.remaining_amount = 0
+        _payment_total, _refund_total, net_paid, shortfall_amount = _after_service_payment_summary(a)
+        a.net_paid_amount = net_paid
+        a.shortfall_amount = shortfall_amount
 
     # A/S 선택 규칙
     # - 사용자가 왼쪽에서 특정 A/S건을 클릭했을 때만 상세를 보여줍니다.
@@ -1701,7 +2023,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     as_new = (request.GET.get("as_new") == "1")
     as_form = None
     as_events = []
-    as_payment_groups = []
+    as_timeline_items = []
     if tab == "A/S":
         # ✅ A/S '대상' 선택지는 제품/결제 탭에 등록된 좌/우를 기준으로 제한
         # - "제일 최근" 제품/결제(회차) 기준으로 제한
@@ -1810,50 +2132,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
             as_form = AfterServiceForm(instance=selected_as, allowed_target_sides=fixed_allowed)
 
         if selected_as:
-            as_events = list(AfterServiceEvent.objects.filter(after_service=selected_as).order_by("-created_at", "-id"))
-            # A/S 결제/환불 내역(제품/결제 '결제내역'과 동일한 표 형태로 노출하기 위한 데이터)
-            # - 결제: A/S 유상 금액(1건)
-            # - 환불: REFUND 이벤트(여러 건) → 음수 금액으로 표시
-            try:
-                if selected_as and int(selected_as.amount or 0) > 0 and (bool(selected_as.is_paid) or int(getattr(selected_as, "refund_amount", 0) or 0) > 0):
-                    pay_row = {
-                        "created_at": selected_as.created_at,
-                        "amount": int(selected_as.amount or 0),
-                        "method": (selected_as.payment_method or ""),
-                        "tax_type": (selected_as.tax_type or ""),
-                        "reason": selected_as.get_reason_code_display(),
-                        "reason_detail": (selected_as.reason_text or "").strip(),
-                        "refundable_remaining": max(int(selected_as.amount or 0) - int(selected_as.refund_amount or 0), 0),
-                        "as_id": selected_as.id,
-                    }
-                else:
-                    pay_row = None
-
-                refund_rows = []
-                for ev in as_events:
-                    if getattr(ev, "event_type", "") != "REFUND":
-                        continue
-                    msg = (getattr(ev, "message", "") or "").strip()
-                    m = re.search(r"환불\s+([0-9,]+)원\s*·\s*(.+)$", msg)
-                    if not m:
-                        continue
-                    try:
-                        amt = int(m.group(1).replace(",", ""))
-                    except Exception:
-                        amt = 0
-                    reason = (m.group(2) or "").strip()
-                    if amt <= 0:
-                        continue
-                    refund_rows.append({
-                        "created_at": ev.created_at,
-                        "amount": -amt,
-                        "refund_reason": reason or msg,
-                    })
-
-                if pay_row or refund_rows:
-                    as_payment_groups = [{"payment": pay_row, "refunds": refund_rows}]
-            except Exception:
-                as_payment_groups = []
+            as_timeline_items = _build_as_timeline_items(selected_as)
 
 
     # A/S 요약(상담 탭 상단 고객정보 요약 카드에서 사용)
@@ -1861,7 +2140,15 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     in_prog = [a for a in after_services if a.status == "IN_PROGRESS"]
     followup_cutoff = today_local - datetime.timedelta(days=7)
     followup_needed = [a for a in in_prog if a.received_at and a.received_at <= followup_cutoff]
-    unpaid_paid = [a for a in after_services if (a.status != "CANCELED" and a.is_paid and a.payment_status == "UNPAID" and int(a.amount or 0) > 0)]
+    # 완료/취소 상태는 제외 - 진행중인 미수금만 계산
+    unpaid_paid = [a for a in after_services if (a.status == "IN_PROGRESS" and a.is_paid and a.payment_status == "UNPAID" and int(a.amount or 0) > 0)]
+    as_unpaid_amount = 0
+    for a in unpaid_paid:
+        try:
+            _paid_total, outstanding_amt = _sync_after_service_payment_state(a)
+            as_unpaid_amount += int(outstanding_amt or 0)
+        except Exception:
+            as_unpaid_amount += max(int(a.amount or 0) - int(getattr(a, "refund_amount", 0) or 0), 0)
     oldest_in_progress = None
     if in_prog:
         try:
@@ -1872,6 +2159,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "in_progress_count": len(in_prog),
         "followup_needed_count": len(followup_needed),
         "unpaid_count": len(unpaid_paid),
+        "unpaid_amount": as_unpaid_amount,
         "oldest_received_at": oldest_in_progress,
     }
 
@@ -2108,6 +2396,10 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
     if request.method == "POST":
         action = request.POST.get("action")
+        try:
+            print(f"[POST TRACE] tab={tab} action={action} as_id={request.POST.get('as_id')}")
+        except Exception:
+            pass
 
         # --- 상담(상담 탭)
         if action in ("add_consultation", "edit_consultation"):
@@ -2157,138 +2449,245 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
             as_id = request.POST.get("as_id")
             obj = None
+            prev = None
             if as_id and str(as_id).isdigit():
                 obj = AfterService.objects.filter(id=int(as_id), customer=customer).first()
-
-            # 생성/수정
-            form = AfterServiceForm(request.POST, instance=obj)
-            if form.is_valid():
-                prev = None
                 if obj is not None:
-                    # 변경 감지용(타임라인/이벤트)
                     prev = {
                         "status": obj.status,
                         "is_paid": bool(obj.is_paid),
                         "amount": int(obj.amount or 0),
+                        "paid_amount": int(getattr(obj, "paid_amount", 0) or 0),
                         "payment_method": (obj.payment_method or ""),
                         "tax_type": (obj.tax_type or ""),
                         "paid_at": obj.paid_at,
-                        "refund_amount": int(getattr(obj, "refund_amount", 0) or 0),
+                        "deposited_at": obj.deposited_at,
                     }
+
+            form = AfterServiceForm(request.POST, instance=obj)
+            if form.is_valid():
                 creating = obj is None
-                as_obj: AfterService = form.save(commit=False)
-                as_obj.customer = customer
-                if not (as_obj.owner or "").strip():
-                    as_obj.owner = (customer.담당자 or "").strip()
-                # 상태 버튼 처리(완료/취소는 날짜 자동 세팅)
-                today = timezone.localdate()
-                if action == "complete_after_service":
-                    as_obj.status = "COMPLETED"
-                    as_obj.completed_at = today
-                    as_obj.canceled_at = None
-                elif action == "cancel_after_service":
-                    as_obj.status = "CANCELED"
-                    as_obj.canceled_at = today
-                    as_obj.completed_at = None
+                # DB 실상태로 재확인(메모리 불일치 방지)
+                if obj is not None:
+                    try:
+                        cur_status = (
+                            AfterService.objects.filter(id=obj.id).values_list("status", flat=True).first()
+                        )
+                    except Exception:
+                        cur_status = obj.status
+                    existing_completed = (cur_status == "COMPLETED")
                 else:
-                    # 일반 저장: 상태에 따라 날짜 정리
-                    if as_obj.status == "IN_PROGRESS":
-                        as_obj.completed_at = None
-                        as_obj.canceled_at = None
-                    elif as_obj.status == "COMPLETED" and not as_obj.completed_at:
+                    existing_completed = False
+                if existing_completed:
+                    print(f"[A/S SAVE TRACE] id={getattr(obj,'id',None)} blocked: already COMPLETED")
+                    form.add_error(None, "완료된 A/S는 수정할 수 없습니다.")
+                else:
+                    as_obj: AfterService = form.save(commit=False)
+                    as_obj.customer = customer
+                    if not (as_obj.owner or "").strip():
+                        as_obj.owner = (customer.담당자 or "").strip()
+                    today = timezone.localdate()
+                    if action == "complete_after_service":
+                        as_obj.status = "COMPLETED"
                         as_obj.completed_at = today
                         as_obj.canceled_at = None
-                    elif as_obj.status == "CANCELED" and not as_obj.canceled_at:
+                    elif action == "cancel_after_service":
+                        as_obj.status = "CANCELED"
                         as_obj.canceled_at = today
                         as_obj.completed_at = None
+                    else:
+                        if as_obj.status == "IN_PROGRESS":
+                            as_obj.completed_at = None
+                            as_obj.canceled_at = None
+                        elif as_obj.status == "COMPLETED" and not as_obj.completed_at:
+                            as_obj.completed_at = today
+                            as_obj.canceled_at = None
+                        elif as_obj.status == "CANCELED" and not as_obj.canceled_at:
+                            as_obj.canceled_at = today
+                            as_obj.completed_at = None
 
-                # 기타 사유면 상세 필수(추가 방어)
-                if (as_obj.reason_code == "ETC") and not (as_obj.reason_text or "").strip():
-                    form.add_error("reason_text", "기타 사유를 입력해 주세요.")
-                else:
-                    as_obj.save()
-                    # 이벤트 기록(간단 메시지)
-                    if creating:
-                        AfterServiceEvent.objects.create(after_service=as_obj, event_type="CREATED", message="A/S 접수")
-
-                    # ✅ 유/무상 전환 이벤트(무상→유상): 사유 기록
+                    prev_payment_total, prev_refund_total, prev_net_paid, prev_shortfall = _after_service_payment_summary(obj) if obj is not None else (0, 0, 0, 0)
+                    entry_paid_amount = int(getattr(as_obj, "paid_amount", 0) or 0)
+                    projected_shortfall = 0
+                    if bool(getattr(as_obj, "is_paid", False)) and int(getattr(as_obj, "amount", 0) or 0) > 0:
+                        projected_shortfall = max(int(getattr(as_obj, "amount", 0) or 0) - (int(prev_net_paid or 0) + entry_paid_amount), 0)
+                    # TRACE: 저장 분기 핵심 값 로깅
                     try:
-                        if (prev is not None) and (not bool(prev.get("is_paid"))) and bool(as_obj.is_paid):
-                            reason = (request.POST.get("paid_toggle_reason") or "").strip()
-                            if reason:
-                                AfterServiceEvent.objects.create(
-                                    after_service=as_obj,
-                                    event_type="MEMO",
-                                    message=f"유/무상 전환(무상→유상) · {reason}",
-                                )
+                        req_status_dbg = (request.POST.get("status") or "").strip().upper()
+                        print(
+                            "[A/S SAVE TRACE] id=%s action=%s req_status=%s is_paid=%s amount=%s entry_paid=%s prev_net=%s proj_short=%s"
+                            % (
+                                getattr(obj, 'id', 'NEW'),
+                                action,
+                                req_status_dbg,
+                                bool(getattr(as_obj, 'is_paid', False)),
+                                int(getattr(as_obj, 'amount', 0) or 0),
+                                entry_paid_amount,
+                                int(prev_net_paid or 0),
+                                projected_shortfall,
+                            )
+                        )
                     except Exception:
                         pass
 
-                    # ✅ 유/무상 전환 이벤트(유상→무상): 전액 환불 상태에서만(폼에서 보장)
-                    try:
-                        if (prev is not None) and bool(prev.get("is_paid")) and (not bool(as_obj.is_paid)):
-                            prev_amt = int(prev.get("amount", 0) or 0)
-                            prev_ref = int(prev.get("refund_amount", 0) or 0)
-                            if prev_amt > 0 and prev_ref >= prev_amt:
-                                AfterServiceEvent.objects.create(
-                                    after_service=as_obj,
-                                    event_type="MEMO",
-                                    message="유/무상 전환(유상→무상)",
-                                )
-                    except Exception:
-                        pass
+                    # 🔍 디버깅: AS 저장 전 상태 확인
+                    print(f"\n{'='*60}")
+                    print(f"🔍 AS 저장 디버깅 (ID={getattr(obj, 'id', 'NEW')})")
+                    print(f"{'='*60}")
+                    print(f"상태: {as_obj.status}")
+                    print(f"유상: {bool(getattr(as_obj, 'is_paid', False))}")
+                    print(f"비용: {int(getattr(as_obj, 'amount', 0) or 0):,}원")
+                    print(f"---")
+                    print(f"이전 총 결제: {prev_payment_total:,}원")
+                    print(f"이전 총 환불: {prev_refund_total:,}원")
+                    print(f"이전 순 결제: {prev_net_paid:,}원")
+                    print(f"이전 미수: {prev_shortfall:,}원")
+                    print(f"---")
+                    print(f"이번 결제 입력: {entry_paid_amount:,}원")
+                    print(f"예상 미수: {projected_shortfall:,}원")
+                    print(f"{'='*60}\n")
 
-                    # ✅ 결제 이벤트: 유상 저장 시(신규/변경) 1회 기록
-                    try:
-                        if bool(as_obj.is_paid) and int(as_obj.amount or 0) > 0:
-                            changed = False
-                            if creating:
-                                changed = True
-                            elif prev is not None:
-                                if (not prev.get("is_paid")) and bool(as_obj.is_paid):
-                                    changed = True
-                                if int(prev.get("amount", 0)) != int(as_obj.amount or 0):
-                                    changed = True
-                                if (prev.get("payment_method", "") or "") != (as_obj.payment_method or ""):
-                                    changed = True
-                                if (prev.get("tax_type", "") or "") != (as_obj.tax_type or ""):
-                                    changed = True
-                                if prev.get("paid_at") != as_obj.paid_at:
-                                    changed = True
+                    if as_obj.status == "COMPLETED" and projected_shortfall > 0:
+                        print(f"⚠️ 완료 거부: 미수 {projected_shortfall:,}원 존재\n")
+                        form.add_error(None, "미수 금액 결제 후 완료 가능합니다.")
+                    elif (as_obj.reason_code == "ETC") and not (as_obj.reason_text or "").strip():
+                        form.add_error("reason_text", "기타 사유를 입력해 주세요.")
+                    else:
+                        as_obj.save()
+                        reason_label = as_obj.get_reason_code_display()
+                        reason_detail = (as_obj.reason_text or "").strip()
+                        full_reason = f"{reason_label} · {reason_detail}" if (as_obj.reason_code == "ETC" and reason_detail) else reason_label
+                        base_memo = (as_obj.memo or "").strip()
 
-                            if changed:
-                                amt = int(as_obj.amount or 0)
-                                method = (as_obj.payment_method or "").strip()
-                                tax = (as_obj.tax_type or "").strip()
-                                extra = []
-                                if method:
-                                    extra.append(method)
-                                if tax:
-                                    extra.append(tax)
-                                suffix = (" · " + " · ".join(extra)) if extra else ""
-                                AfterServiceEvent.objects.create(
+                        if creating:
+                            AfterServiceEvent.objects.create(
+                                after_service=as_obj,
+                                event_type="CREATED",
+                                message="A/S 접수",
+                                reason=full_reason,
+                                memo=base_memo,
+                                happened_on=as_obj.received_at,
+                            )
+
+                        try:
+                            if (prev is not None) and (not bool(prev.get("is_paid"))) and bool(as_obj.is_paid):
+                                toggle_reason = (request.POST.get("paid_toggle_reason") or "").strip()
+                                if toggle_reason:
+                                    AfterServiceEvent.objects.create(
+                                        after_service=as_obj,
+                                        event_type="MEMO",
+                                        message="유/무상 전환(무상→유상)",
+                                        reason=toggle_reason,
+                                        memo=base_memo,
+                                        happened_on=today,
+                                    )
+                        except Exception:
+                            pass
+
+                        entry_paid_amount = int(getattr(as_obj, "paid_amount", 0) or 0)
+                        payment_created = False
+                        if bool(as_obj.is_paid) and int(as_obj.amount or 0) > 0 and entry_paid_amount > 0:
+                            method = (as_obj.payment_method or "").strip()
+                            event_date = as_obj.paid_at if method == "카드" else (as_obj.deposited_at or as_obj.paid_at)
+                            parent_payment_event = None
+                            repay_parent_event_id = (request.POST.get("repay_parent_event_id") or "").strip()
+                            if repay_parent_event_id.isdigit():
+                                parent_payment_event = AfterServiceEvent.objects.filter(
+                                    id=int(repay_parent_event_id),
                                     after_service=as_obj,
                                     event_type="PAYMENT",
-                                    message=f"결제 {amt:,}원{suffix}",
-                                )
-                    except Exception:
-                        pass
+                                    parent_event__isnull=True,
+                                ).first()
+                            AfterServiceEvent.objects.create(
+                                after_service=as_obj,
+                                parent_event=parent_payment_event,
+                                event_type="PAYMENT",
+                                message="재결제" if parent_payment_event else "결제",
+                                reason=full_reason,
+                                memo=base_memo,
+                                amount=entry_paid_amount,
+                                payment_method=method,
+                                tax_type="과세" if bool(as_obj.is_paid) else "",
+                                happened_on=event_date,
+                            )
+                            payment_created = True
+                            if getattr(as_obj, "paid_amount", 0):
+                                as_obj.paid_amount = 0
+                                as_obj.save(update_fields=["paid_amount", "updated_at"])
+                        before_sync_status = as_obj.status
+                        force_in_progress_after_paid_toggle = bool(prev is not None and (not bool(prev.get("is_paid"))) and bool(as_obj.is_paid))
+                        # 명시적으로 완료/취소 처리하는 경우 force_in_progress 무시
+                        if action in ("complete_after_service", "cancel_after_service"):
+                            force_in_progress_after_paid_toggle = False
+                        _net_paid, _outstanding = _sync_after_service_payment_state(
+                            as_obj,
+                            force_in_progress=force_in_progress_after_paid_toggle,
+                        )
+                        as_obj.refresh_from_db()
 
-                    if action == "complete_after_service":
-                        AfterServiceEvent.objects.create(after_service=as_obj, event_type="STATUS", message="완료 처리")
-                    elif action == "cancel_after_service":
-                        AfterServiceEvent.objects.create(after_service=as_obj, event_type="STATUS", message="취소 처리")
-                    else:
-                        # 일반 저장은 타임라인 이벤트를 남기지 않습니다.
-                        # (요청사항: 타임라인에는 접수/취소/결제/환불만 노출)
-                        pass
+                        # 보강: 폼에서 완료를 선택했는데(또는 전송 도중) 상태가 진행중으로 남는 드문 케이스 방지
+                        try:
+                            req_status = (request.POST.get("status") or "").strip().upper()
+                        except Exception:
+                            req_status = ""
+                        if req_status == "COMPLETED" and as_obj.status != "COMPLETED":
+                            as_obj.status = "COMPLETED"
+                            if not getattr(as_obj, "completed_at", None):
+                                as_obj.completed_at = timezone.localdate()
+                            as_obj.canceled_at = None
+                            as_obj.save(update_fields=["status", "completed_at", "canceled_at", "updated_at"])  # 최종 보정
 
-                    return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
 
+                        status_changed = creating is False and prev is not None and (prev.get("status") != as_obj.status)
+                        if action == "complete_after_service" or (req_status == "COMPLETED" and as_obj.status == "COMPLETED"):
+                            status_msg = "완료 처리"
+                        elif action == "cancel_after_service":
+                            status_msg = "취소 처리"
+                        elif status_changed:
+                            if as_obj.status == "COMPLETED":
+                                status_msg = "완료 처리"
+                            elif as_obj.status == "CANCELED":
+                                status_msg = "취소 처리"
+                            else:
+                                status_msg = "진행중 변경"
+                        else:
+                            status_msg = ""
 
+                        if (not status_msg) and payment_created and before_sync_status != as_obj.status:
+                            if as_obj.status == "IN_PROGRESS":
+                                status_msg = "진행중 변경"
+                        if status_msg:
+                            status_date = as_obj.completed_at or as_obj.canceled_at or today
+                            AfterServiceEvent.objects.create(
+                                after_service=as_obj,
+                                event_type="STATUS",
+                                message=status_msg,
+                                reason=full_reason,
+                                memo=base_memo,
+                                happened_on=status_date,
+                            )
 
-            # 폼 에러 시 아래 렌더로 진행
-            as_form = form
+                        try:
+                            import sys
+                            print("[A/S SAVE TRACE] id=%s -> redirect to detail" % as_obj.id)
+                        except Exception:
+                            pass
+                        return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
+            else:
+                # DEBUG: A/S 폼 에러 추적(일시)
+                try:
+                    print("[A/S FORM INVALID] as_id=%s errors=%s non_field=%s" % (
+                        (obj.id if obj else 'NEW'),
+                        {k: [str(e) for e in v] for k, v in getattr(form, 'errors', {}).items()},
+                        [str(e) for e in getattr(form, 'non_field_errors', lambda: [])()],
+                    ))
+                except Exception:
+                    pass
+                try:
+                    print("[A/S SAVE TRACE] id=%s -> render (form invalid)" % (obj.id if obj else 'NEW'))
+                except Exception:
+                    pass
+                as_form = form
 
         # --- A/S 환불 (A/S 탭 상세의 '환불' 버튼)
         if action == "refund_after_service":
@@ -2301,13 +2700,17 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
             if as_obj is None:
                 return redirect(f"/customers/{customer.id}/?tab=A/S")
 
-            if not as_obj.is_paid or int(as_obj.amount or 0) <= 0:
+            pay_event_id = request.POST.get("payment_event_id")
+            payment_event = None
+            if pay_event_id and str(pay_event_id).isdigit():
+                payment_event = AfterServiceEvent.objects.filter(
+                    id=int(pay_event_id), after_service=as_obj, event_type="PAYMENT"
+                ).first()
+            if payment_event is None:
                 return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
 
-            # 입력값
             def _to_int(v):
                 try:
-                    import re
                     n = int(re.sub(r"[^0-9]", "", str(v or "")) or "0")
                     return n
                 except Exception:
@@ -2315,62 +2718,35 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
             req_amt = _to_int(request.POST.get("refund_amount"))
             reason = (request.POST.get("refund_reason") or "").strip()
-            # 환불일은 제품/결제 환불 UX처럼 '오늘'로 자동 처리합니다.
+            refund_memo = (request.POST.get("refund_memo") or "").strip()
             if req_amt <= 0 or not reason:
-                # 폼 리렌더 대신 간단히 되돌림(모달에서 필수 체크하므로 서버는 방어만)
                 return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
 
-            # 잔여 환불 가능 금액
-            current_refund = int(as_obj.refund_amount or 0)
-            remain = max(int(as_obj.amount or 0) - current_refund, 0)
+            pay_amount = _as_event_amount(payment_event)
+            refunded_total = 0
+            for child in payment_event.children.filter(event_type="REFUND"):
+                refunded_total += _as_event_amount(child)
+            remain = max(pay_amount - refunded_total, 0)
             if remain <= 0:
                 return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
             if req_amt > remain:
-                req_amt = remain
+                return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
 
             refund_at = timezone.localdate()
-
-            # 누적 환불
-            as_obj.refund_amount = current_refund + req_amt
-            as_obj.refund_at = refund_at
-            as_obj.save(update_fields=["refund_amount", "refund_at", "updated_at"])
-
             AfterServiceEvent.objects.create(
                 after_service=as_obj,
+                parent_event=payment_event,
                 event_type="REFUND",
-                message=f"환불 {req_amt:,}원 · {reason}",
+                message="환불",
+                reason=reason,
+                memo=refund_memo,
+                amount=req_amt,
+                payment_method=(payment_event.payment_method or as_obj.payment_method or ""),
+                tax_type=(payment_event.tax_type or as_obj.tax_type or ""),
+                happened_on=refund_at,
             )
 
-            # ✅ 환불 완료 시 A/S 건은 '취소' 처리(전액 환불 기준)
-            try:
-                now_refund = int(as_obj.refund_amount or 0)
-                total_amt = int(as_obj.amount or 0)
-                if total_amt > 0 and now_refund >= total_amt and as_obj.status != "CANCELED":
-                    as_obj.status = "CANCELED"
-                    as_obj.canceled_at = refund_at
-                    as_obj.completed_at = None
-                    as_obj.save(update_fields=["status", "canceled_at", "completed_at", "updated_at"])
-                    AfterServiceEvent.objects.create(after_service=as_obj, event_type="STATUS", message="취소 처리(환불)")
-            except Exception:
-                pass
-
-            # ✅ 유상 → 무상 자동 전환(전액 환불 완료 후)
-            try:
-                auto_unpaid = (request.POST.get("auto_unpaid") or "").strip() == "1"
-                if auto_unpaid:
-                    now_refund = int(as_obj.refund_amount or 0)
-                    total_amt = int(as_obj.amount or 0)
-                    if total_amt > 0 and now_refund >= total_amt:
-                        if bool(as_obj.is_paid):
-                            as_obj.is_paid = False
-                            as_obj.save(update_fields=["is_paid", "updated_at"])
-                        AfterServiceEvent.objects.create(
-                            after_service=as_obj,
-                            event_type="MEMO",
-                            message="유/무상 전환(유상→무상 · 전액환불 완료)",
-                        )
-            except Exception:
-                pass
+            _sync_after_service_payment_state(as_obj)
 
             return redirect(f"/customers/{customer.id}/?tab=A/S&as_id={as_obj.id}")
 
@@ -3509,7 +3885,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
             ),
             "as_form": as_form,
             "as_events": as_events,
-            "as_payment_groups": as_payment_groups,
+            "as_timeline_items": as_timeline_items,
             "as_new": as_new,
             "as_summary": as_summary,
             "today": timezone.localdate(),
@@ -9063,7 +9439,7 @@ def _zip_response(files: list[tuple[str, bytes]], zip_name: str) -> HttpResponse
 def download_general_public_documents(request: HttpRequest, case_id: int) -> HttpResponse:
     case = get_object_or_404(CustomerCase, id=case_id, customer__is_deleted=False)
     track = (case.customer.track or "").strip()
-    if track not in ("일반", "의료", "차상위"):
+    if track not in ("일반", "의료", "차상위", "공단"):
         return HttpResponseForbidden("잘못된 구분값입니다.")
 
     # 다운로드는 항상 진행하되, 프로필 누락/매핑 누락은 모달로 안내
