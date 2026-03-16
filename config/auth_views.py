@@ -20,7 +20,8 @@ RESET_TARGET_KEY = "password_reset_target_user_id"
 
 
 def landing_view(request: HttpRequest) -> HttpResponse:
-    return render(request, "landing.html")
+    login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
+    return redirect(login_url)
 
 
 def logout_to_login_with_next(request: HttpRequest) -> HttpResponse:
